@@ -1,0 +1,234 @@
+@attribute [Authorize]
+@page "/loan-applications"
+@inject GroupApiClient GroupApi
+@inject MemberApiClient MemberApi
+@inject LoanApplicationApiClient LoanApplicationApi
+@inject AuthenticationStateProvider AuthenticationState
+
+<PageTitle>Loan Applications</PageTitle>
+
+<div class="page-shell">
+    <div class="page-heading">
+        <div><h1>Loan Applications</h1><p class="muted">Create, submit, review and approve member loan applications before disbursement.</p></div>
+        @if (_canManage && !_showForm) { <button class="primary-button" @onclick="StartCreate">New Loan Application</button> }
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error)) { <div class="alert error">@_error</div> }
+    @if (!string.IsNullOrWhiteSpace(_message)) { <div class="alert success">@_message</div> }
+
+    @if (_loading)
+    {
+        <p>Loading loan applications...</p>
+    }
+    else if (_groupId is null)
+    {
+        <section class="setup-card"><p>No active group is configured.</p></section>
+    }
+    else
+    {
+        @if (_showForm)
+        {
+            <section class="setup-card">
+                <div class="section-heading"><div><h2>@(_editingId.HasValue ? "Edit Loan Application" : "New Loan Application")</h2></div><button class="secondary-button" @onclick="CancelForm">Cancel</button></div>
+                <EditForm Model="_form" OnValidSubmit="SaveAsync">
+                    <div class="form-grid">
+                        <div class="form-field"><label>Member</label><InputSelect @bind-Value="_form.MemberId"><option value="0">Select member</option>@foreach (var m in _members.Where(x => x.IsActive)) { <option value="@m.Id">@m.MemberNumber - @m.FullName</option> }</InputSelect></div>
+                        <div class="form-field"><label>Application Date</label><NepaliDateInput @bind-Value="_form.ApplicationDate" /></div>
+                        <div class="form-field"><label>Requested Amount (NPR)</label><InputNumber @bind-Value="_form.RequestedAmount" /></div>
+                        <div class="form-field"><label>Duration (Months)</label><InputNumber @bind-Value="_form.RequestedDurationMonths" /></div>
+                        <div class="form-field"><label>Interest Rate (%)</label><InputNumber @bind-Value="_form.ProposedInterestRate" /></div>
+                        <div class="form-field"><label>Loan Method</label><InputSelect @bind-Value="_form.ProposedInterestMethod"><option value="ReducingBalance">Reducing Balance</option><option value="Flat">Flat</option></InputSelect></div>
+                        <div class="form-field"><label>Requested EMI (NPR)</label><input value="@_calculatedEmi.ToString("N2")" disabled /></div>
+                        <div class="form-field full"><label>Purpose</label><InputTextArea @bind-Value="_form.Purpose" /></div>
+                    </div>
+                    <button class="primary-button" type="submit" disabled="@_saving">@(_saving ? "Saving..." : "Save Draft")</button>
+                </EditForm>
+            </section>
+        }
+
+        @if (_selected is not null)
+        {
+            <section class="setup-card">
+                <div class="section-heading"><div><h2>@_selected.LoanApplicationNumber</h2><span class="muted">@_selected.MemberName — @_selected.Status</span></div><div>@if (_selected.Status == "Draft" && _canManage) { <button class="secondary-button" @onclick="StartEdit">Edit</button> } <button class="secondary-button" @onclick="CloseDetails">Close</button></div></div>
+                <div class="card-grid">
+                    <div class="summary-card"><span>Requested</span><strong>NPR @_selected.RequestedAmount.ToString("N2")</strong></div>
+                    <div class="summary-card"><span>EMI</span><strong>NPR @_selected.RequestedEmi.ToString("N2")</strong></div>
+                    <div class="summary-card"><span>Eligibility</span><strong>@(_selected.Eligibility.IsEligible ? "Eligible" : "Not Eligible")</strong></div>
+                    <div class="summary-card"><span>Max Eligible</span><strong>NPR @_selected.Eligibility.MaximumEligibleAmount.ToString("N2")</strong></div>
+                </div>
+                @if (!_selected.Eligibility.IsEligible) { <div class="alert error">@string.Join(" ", _selected.Eligibility.Reasons)</div> }
+                <p><strong>Purpose:</strong> @_selected.Purpose</p>
+                <p><strong>Method:</strong> @_selected.ProposedInterestMethod, <strong>Rate:</strong> @_selected.ProposedInterestRate.ToString("0.####")%, <strong>Duration:</strong> @_selected.RequestedDurationMonths months</p>
+                <h3>Guarantors</h3>
+                @if (_selected.Guarantors.Count == 0) { <p class="muted">No guarantors added.</p> }
+                else { <div class="nominee-grid">@foreach (var g in _selected.Guarantors.Where(x => x.Status == "Active")) { <div class="nominee-card"><strong>@g.MemberName</strong><span>@g.MemberNumber</span>@if (_selected.Status == "Draft" && _canManage) { <button class="danger-button" @onclick="() => RemoveGuarantorAsync(g.Id)">Remove</button> }</div> }</div> }
+                @if (_canManage && _selected.Status == "Draft")
+                {
+                    <div class="form-grid"><div class="form-field"><label>Add Guarantor</label><InputSelect @bind-Value="_guarantorMemberId"><option value="0">Select member</option>@foreach (var m in _members.Where(x => x.IsActive && x.Id != _selected.MemberId && !_selected.Guarantors.Any(g => g.MemberId == x.Id && g.Status == "Active"))) { <option value="@m.Id">@m.MemberNumber - @m.FullName</option> }</InputSelect></div></div>
+                    <button class="secondary-button" @onclick="AddGuarantorAsync">Add Guarantor</button>
+                }
+                @if (_canManage)
+                {
+                    <div class="action-row">
+                        @if (_selected.Status == "Draft") { <button class="primary-button" @onclick="SubmitAsync">Submit for Approval</button><button class="danger-button" @onclick="CancelApplicationAsync">Cancel Application</button> }
+                        @if (_selected.Status == "Submitted" && _canApprove) { <button class="primary-button" @onclick="ApproveAsync">Approve</button><button class="danger-button" @onclick="RejectAsync">Reject</button> }
+                    </div>
+                    @if (_selected.Status == "Submitted" && _canApprove) { <div class="form-field"><label>Decision Remarks</label><InputTextArea @bind-Value="_decisionRemarks" /></div> }
+                }
+                @if (_selected.DecisionDate.HasValue) { <p class="muted">Decision: @_selected.DecisionDate.Value.ToNepaliDateTimeString() — @_selected.DecisionRemarks</p> }
+            </section>
+        }
+
+        @if (!_showForm && _selected is null)
+        {
+            <section class="setup-card">
+                <div class="section-heading"><div><h2>Application Register</h2><span class="muted">@_applications.Count application(s)</span></div><div><select @bind="_statusFilter" @bind:after="ReloadAsync"><option value="">All statuses</option>@foreach (var s in new[] { "Draft", "Submitted", "Approved", "Rejected", "Disbursed", "Closed", "Cancelled" }) { <option value="@s">@s</option>}</select></div></div>
+                @if (_applications.Count == 0) { <p class="muted">No loan applications found.</p> }
+                else
+                {
+                    <div class="table-wrap"><table class="data-table"><thead><tr><th>No.</th><th>Member</th><th>Date</th><th>Amount</th><th>EMI</th><th>Rate</th><th>Duration</th><th>Guarantors</th><th>Status</th><th></th></tr></thead><tbody>
+                    @foreach (var a in _applications) { <tr><td>@a.LoanApplicationNumber</td><td>@a.MemberNumber - @a.MemberName</td><td>@a.ApplicationDate.ToNepaliDateString()</td><td>NPR @a.RequestedAmount.ToString("N2")</td><td>NPR @a.RequestedEmi.ToString("N2")</td><td>@a.ProposedInterestRate.ToString("0.####")%</td><td>@a.RequestedDurationMonths</td><td>@a.GuarantorCount</td><td><span class="badge">@a.Status</span></td><td><button class="link-button" @onclick="() => OpenAsync(a.Id)">View</button></td></tr> }
+                    </tbody></table></div>
+                }
+            </section>
+        }
+    }
+</div>
+
+@code {
+    private long? _groupId;
+    private GroupModel? _group;
+    private List<MemberModel> _members = [];
+    private List<LoanApplicationSummaryModel> _applications = [];
+    private LoanApplicationModel? _selected;
+    private LoanApplicationCreateModel _form = new();
+    private long? _editingId;
+    private long _guarantorMemberId;
+    private string _statusFilter = string.Empty;
+    private string _decisionRemarks = string.Empty;
+    private bool _loading = true;
+    private bool _saving;
+    private bool _canManage;
+    private bool _canApprove;
+    private string? _error;
+    private string? _message;
+
+    private decimal _calculatedEmi => CalculatePreviewEmi();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthenticationState.GetAuthenticationStateAsync();
+        _canManage = state.User.HasClaim("permission", "Loans.Manage");
+        _canApprove = state.User.IsInRole("Super Administrator") || state.User.IsInRole("Group Administrator");
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true; _error = null;
+        var groups = await GroupApi.GetGroupsAsync();
+        if (!groups.Success || groups.Groups is null || groups.Groups.Count == 0) { _error = groups.Error ?? "No active group is configured."; _loading = false; return; }
+        _group = groups.Groups[0]; _groupId = _group.Id;
+        var members = await MemberApi.GetMembersAsync(_group.Id, false);
+        if (!members.Success) _error = members.Error;
+        else _members = members.Members?.ToList() ?? [];
+        await ReloadAsync();
+        _loading = false;
+    }
+
+    private async Task ReloadAsync()
+    {
+        if (!_groupId.HasValue) return;
+        var result = await LoanApplicationApi.GetApplicationsAsync(_groupId.Value, _statusFilter);
+        if (!result.Success) _error = result.Error; else _applications = result.Applications?.ToList() ?? [];
+    }
+
+    private void StartCreate()
+    {
+        _editingId = null; _selected = null; _error = null; _message = null;
+        var settings = _group?.Settings;
+        _form = new LoanApplicationCreateModel { GroupId = _groupId ?? 0, ApplicationDate = DateTime.Today, RequestedDurationMonths = settings?.DefaultLoanDuration ?? 12, ProposedInterestRate = settings?.DefaultLoanInterestRate ?? 12m, ProposedInterestMethod = NormalizeMethod(settings?.LoanInterestMethod) };
+        _showForm = true;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true; _error = null; _message = null;
+        var result = _editingId.HasValue
+            ? await LoanApplicationApi.UpdateAsync(_editingId.Value, new LoanApplicationUpdateModel { ApplicationDate = _form.ApplicationDate, RequestedAmount = _form.RequestedAmount, Purpose = _form.Purpose, RequestedDurationMonths = _form.RequestedDurationMonths ?? 0, ProposedInterestRate = _form.ProposedInterestRate ?? 0m, ProposedInterestMethod = _form.ProposedInterestMethod ?? "ReducingBalance" })
+            : await LoanApplicationApi.CreateAsync(_form);
+        _saving = false;
+        if (!result.Success || result.Data is null) { _error = result.Error; return; }
+        _message = "Loan application draft saved."; _showForm = false; await ReloadAsync(); await OpenAsync(result.Data.Id);
+    }
+
+    private bool _showForm;
+    private async Task OpenAsync(long id)
+    {
+        var result = await LoanApplicationApi.GetAsync(id);
+        if (!result.Success) _error = result.Error;
+        else { _selected = result.Data; _showForm = false; _editingId = null; _error = null; }
+    }
+
+    private void StartEdit()
+    {
+        if (_selected is null) return;
+        _editingId = _selected.Id;
+        _form = new LoanApplicationCreateModel
+        {
+            GroupId = _selected.GroupId,
+            MemberId = _selected.MemberId,
+            ApplicationDate = _selected.ApplicationDate,
+            RequestedAmount = _selected.RequestedAmount,
+            Purpose = _selected.Purpose,
+            RequestedDurationMonths = _selected.RequestedDurationMonths,
+            ProposedInterestRate = _selected.ProposedInterestRate,
+            ProposedInterestMethod = _selected.ProposedInterestMethod
+        };
+        _showForm = true;
+    }
+    private void CloseDetails() => _selected = null;
+    private void CancelForm() => _showForm = false;
+
+    private async Task AddGuarantorAsync()
+    {
+        if (_selected is null || _guarantorMemberId <= 0) return;
+        var result = await LoanApplicationApi.AddGuarantorAsync(_selected.Id, _guarantorMemberId);
+        if (!result.Success) { _error = result.Error; return; }
+        _guarantorMemberId = 0; await OpenAsync(_selected.Id); await ReloadAsync();
+    }
+
+    private async Task RemoveGuarantorAsync(long guarantorId)
+    {
+        if (_selected is null) return;
+        var result = await LoanApplicationApi.RemoveGuarantorAsync(_selected.Id, guarantorId);
+        if (!result.Success) { _error = result.Error; return; }
+        await OpenAsync(_selected.Id); await ReloadAsync();
+    }
+
+    private async Task SubmitAsync() { await ExecuteDecisionlessAsync(() => LoanApplicationApi.SubmitAsync(_selected!.Id), "Application submitted for approval."); }
+    private async Task ApproveAsync() { await ExecuteDecisionlessAsync(() => LoanApplicationApi.ApproveAsync(_selected!.Id, _decisionRemarks), "Application approved."); }
+    private async Task RejectAsync() { await ExecuteDecisionlessAsync(() => LoanApplicationApi.RejectAsync(_selected!.Id, _decisionRemarks), "Application rejected."); }
+    private async Task CancelApplicationAsync() { await ExecuteDecisionlessAsync(() => LoanApplicationApi.CancelAsync(_selected!.Id), "Application cancelled."); }
+
+    private async Task ExecuteDecisionlessAsync(Func<Task<(bool Success, string? Error, LoanApplicationModel? Data)>> action, string successMessage)
+    {
+        if (_selected is null) return;
+        _error = null; _message = null;
+        var result = await action();
+        if (!result.Success) { _error = result.Error; return; }
+        _message = successMessage; _decisionRemarks = string.Empty; await OpenAsync(_selected.Id); await ReloadAsync();
+    }
+
+    private decimal CalculatePreviewEmi()
+    {
+        if (_form.RequestedAmount <= 0 || (_form.RequestedDurationMonths ?? 0) <= 0 || (_form.ProposedInterestRate ?? 0) < 0) return 0m;
+        var n = _form.RequestedDurationMonths!.Value; var rate = _form.ProposedInterestRate!.Value / 100m / 12m;
+        if ((_form.ProposedInterestMethod ?? "ReducingBalance").Equals("Flat", StringComparison.OrdinalIgnoreCase)) return Math.Round((_form.RequestedAmount + _form.RequestedAmount * _form.ProposedInterestRate!.Value / 100m * n / 12m) / n, 2, MidpointRounding.AwayFromZero);
+        if (rate == 0m) return Math.Round(_form.RequestedAmount / n, 2, MidpointRounding.AwayFromZero);
+        var factor = (decimal)Math.Pow((double)(1m + rate), n);
+        return Math.Round(_form.RequestedAmount * rate * factor / (factor - 1m), 2, MidpointRounding.AwayFromZero);
+    }
+
+    private static string NormalizeMethod(string? method) => method?.Equals("Flat", StringComparison.OrdinalIgnoreCase) == true ? "Flat" : "ReducingBalance";
+}

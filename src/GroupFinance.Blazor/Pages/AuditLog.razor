@@ -1,0 +1,179 @@
+@page "/audit-log"
+@attribute [Authorize]
+@inject GroupApiClient GroupApi
+@inject AuditApiClient AuditApi
+
+<PageTitle>Audit Trail & Reversal</PageTitle>
+
+<div class="audit-page">
+    <div class="page-heading">
+        <div>
+            <h1>Audit Trail & Reversal</h1>
+            <p class="page-description">Review financial audit history and reverse posted financial transactions without deleting their original records.</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error)) { <div class="alert error">@_error</div> }
+    @if (!string.IsNullOrWhiteSpace(_success)) { <div class="alert success">@_success</div> }
+
+    @if (_loading)
+    {
+        <p>Loading...</p>
+    }
+    else if (_group is null)
+    {
+        <p>No active group is configured.</p>
+    }
+    else
+    {
+        <section class="setup-card">
+            <h2>Reverse Financial Transaction</h2>
+            <p class="muted">Select a posted transaction ID, provide a reason, and create an opposite journal. The original transaction remains in the database with status <strong>Reversed</strong>.</p>
+            <div class="form-grid">
+                <div class="form-field">
+                    <label>Transaction ID</label>
+                    <InputNumber @bind-Value="_transactionId" />
+                </div>
+                <div class="form-field">
+                    <label>Reversal Date</label>
+                    <NepaliDateInput @bind-Value="_reversalDate" />
+                </div>
+                <div class="form-field">
+                    <label>Reference Number (optional)</label>
+                    <InputText @bind-Value="_referenceNumber" />
+                </div>
+                <div class="form-field" style="grid-column: 1 / -1;">
+                    <label>Reason</label>
+                    <InputTextArea @bind-Value="_reason" rows="3" />
+                </div>
+            </div>
+            <button class="primary-button" disabled="@(_transactionId <= 0 || string.IsNullOrWhiteSpace(_reason) || _busy)" @onclick="ReverseAsync">
+                @(_busy ? "Reversing..." : "Reverse Transaction")
+            </button>
+        </section>
+
+        <section class="setup-card">
+            <div class="section-heading">
+                <div>
+                    <h2>Audit Log</h2>
+                    <p class="muted">Financial transaction reversal history for the configured group.</p>
+                </div>
+                <button class="secondary-button" @onclick="LoadAsync">Refresh</button>
+            </div>
+
+            <div class="form-grid">
+                <div class="form-field">
+                    <label>Action</label>
+                    <select @bind="_action">
+                        <option value="">All actions</option>
+                        <option value="Reversed">Reversed</option>
+                    </select>
+                </div>
+                <div class="form-field"><label>From Date</label><NepaliNullableDateInput @bind-Value="_fromDate" /></div>
+                <div class="form-field"><label>To Date</label><NepaliNullableDateInput @bind-Value="_toDate" /></div>
+            </div>
+
+            @if (_logs.Count == 0)
+            {
+                <p class="muted">No audit entries found.</p>
+            }
+            else
+            {
+                <p class="muted">@_logs.Count audit entries shown (maximum 1,000).</p>
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>User</th>
+                                <th>Entity</th>
+                                <th>Action</th>
+                                <th>Entity ID</th>
+                                <th>Reason</th>
+                                <th>Old Values</th>
+                                <th>New Values</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var log in _logs)
+                        {
+                            <tr>
+                                <td>@log.CreatedAtUtc.ToNepaliDateTimeString()</td>
+                                <td>@log.UserName</td>
+                                <td>@log.EntityName</td>
+                                <td>@log.Action</td>
+                                <td>@(log.EntityId?.ToString() ?? "-")</td>
+                                <td>@(log.Reason ?? "-")</td>
+                                <td><code>@log.OldValuesJson</code></td>
+                                <td><code>@log.NewValuesJson</code></td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    }
+</div>
+
+@code {
+    private GroupModel? _group;
+    private List<AuditLogModel> _logs = [];
+    private long _transactionId;
+    private DateTime _reversalDate = DateTime.Today;
+    private string _reason = string.Empty;
+    private string? _referenceNumber;
+    private string _action = string.Empty;
+    private DateTime? _fromDate;
+    private DateTime? _toDate;
+    private bool _loading = true;
+    private bool _busy;
+    private string? _error;
+    private string? _success;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var groups = await GroupApi.GetGroupsAsync();
+        if (!groups.Success || groups.Groups is null || groups.Groups.Count == 0)
+        {
+            _error = groups.Error ?? "Unable to load the configured group.";
+            _loading = false;
+            return;
+        }
+
+        _group = groups.Groups[0];
+        _loading = false;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_group is null) return;
+        _error = null;
+        var result = await AuditApi.GetLogsAsync(_group.Id, "FinancialTransaction", null, _action, _fromDate, _toDate);
+        if (!result.Success) { _error = result.Error; return; }
+        _logs = result.Data?.ToList() ?? [];
+    }
+
+    private async Task ReverseAsync()
+    {
+        if (_group is null || _transactionId <= 0 || string.IsNullOrWhiteSpace(_reason)) return;
+        _error = null;
+        _success = null;
+        _busy = true;
+
+        var result = await AuditApi.ReverseAsync(
+            _transactionId,
+            new ReverseTransactionRequestModel(_reversalDate, _reason.Trim(), string.IsNullOrWhiteSpace(_referenceNumber) ? null : _referenceNumber.Trim()));
+
+        _busy = false;
+        if (!result.Success)
+        {
+            _error = result.Error;
+            return;
+        }
+
+        _success = $"Transaction {_transactionId} was reversed successfully. Reversal transaction: {result.Data?.TransactionNumber ?? "-"}";
+        await LoadAsync();
+    }
+}

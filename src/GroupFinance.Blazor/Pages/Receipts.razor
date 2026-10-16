@@ -1,0 +1,149 @@
+@page "/receipts"
+@attribute [Authorize]
+@inject GroupApiClient GroupApi
+@inject LedgerApiClient LedgerApi
+
+<PageTitle>Receipts & Documents</PageTitle>
+
+<div class="page-container">
+    <div class="page-heading">
+        <div>
+            <h1>Receipts & Documents</h1>
+            <p class="page-description">Generate and print receipts and vouchers from posted financial transactions.</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error)) { <div class="alert error">@_error</div> }
+    @if (_loading)
+    {
+        <p>Loading...</p>
+    }
+    else if (_group is null)
+    {
+        <p>No active group is configured.</p>
+    }
+    else
+    {
+        <section class="setup-card">
+            <div class="form-grid">
+                <div class="form-field"><label>From Date</label><NepaliNullableDateInput @bind-Value="_fromDate" /></div>
+                <div class="form-field"><label>To Date</label><NepaliNullableDateInput @bind-Value="_toDate" /></div>
+            </div>
+            <button class="primary-button" @onclick="LoadAsync">Load Receipts</button>
+
+            @if (_rows.Count == 0)
+            {
+                <p class="muted">No supported posted financial transactions match the selected dates.</p>
+            }
+            else
+            {
+                <p class="muted">@_rows.Count receipt-ready transactions shown.</p>
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>Date</th><th>Receipt Type</th><th>Transaction</th><th>Member</th><th>Amount</th><th>Action</th></tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var row in _rows)
+                        {
+                            <tr>
+                                <td>@row.TransactionDate.ToNepaliDateString()</td>
+                                <td>@GetReceiptType(row.TransactionType)</td>
+                                <td><strong>@row.TransactionNumber</strong><br /><span class="muted">@row.Description</span></td>
+                                <td>@(row.MemberName is null ? "-" : $"{row.MemberNumber} - {row.MemberName}")</td>
+                                <td>NPR @row.Amount.ToString("N2")</td>
+                                <td><a href="@($"/receipts/{row.FinancialTransactionId}")">View / Print</a></td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    }
+</div>
+
+@code {
+    private GroupModel? _group;
+    private List<ReceiptListRow> _rows = [];
+    private DateTime? _fromDate;
+    private DateTime? _toDate;
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var groups = await GroupApi.GetGroupsAsync();
+        if (!groups.Success || groups.Groups is null || groups.Groups.Count == 0)
+        {
+            _error = groups.Error ?? "Unable to load the active group.";
+            _loading = false;
+            return;
+        }
+
+        _group = groups.Groups[0];
+        _loading = false;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_group is null) return;
+        _error = null;
+
+        var result = await LedgerApi.GetGroupLedgerAsync(_group.Id, _fromDate, _toDate, null);
+        if (!result.Success)
+        {
+            _error = result.Error;
+            _rows = [];
+            return;
+        }
+
+        _rows = result.Data?
+            .Where(x => HasReceipt(x.TransactionType))
+            .GroupBy(x => x.FinancialTransactionId)
+            .Select(g =>
+            {
+                var first = g.OrderBy(x => x.TransactionDetailId).First();
+                return new ReceiptListRow(
+                    first.FinancialTransactionId,
+                    first.TransactionNumber,
+                    first.TransactionDate,
+                    first.TransactionType,
+                    first.Description,
+                    first.MemberNumber,
+                    first.MemberName,
+                    g.Sum(x => x.DebitAmount));
+            })
+            .OrderByDescending(x => x.TransactionDate)
+            .ThenByDescending(x => x.FinancialTransactionId)
+            .ToList() ?? [];
+    }
+
+    private static bool HasReceipt(string transactionType) => transactionType.Trim().ToUpperInvariant() switch
+    {
+        "CONTRIBUTION" or "LOAN_DISBURSEMENT" or "LOAN_REPAYMENT" or "EXPENSE" or "ASSET_PURCHASE" or "INTEREST_DISTRIBUTION" => true,
+        _ => false
+    };
+
+    private static string GetReceiptType(string transactionType) => transactionType.Trim().ToUpperInvariant() switch
+    {
+        "CONTRIBUTION" => "Contribution Receipt",
+        "LOAN_DISBURSEMENT" => "Loan Disbursement Receipt",
+        "LOAN_REPAYMENT" => "Loan Repayment Receipt",
+        "EXPENSE" => "Expense Voucher",
+        "ASSET_PURCHASE" => "Asset Purchase Voucher",
+        "INTEREST_DISTRIBUTION" => "Profit Distribution Voucher",
+        _ => transactionType
+    };
+
+    private sealed record ReceiptListRow(
+        long FinancialTransactionId,
+        string TransactionNumber,
+        DateTime TransactionDate,
+        string TransactionType,
+        string? Description,
+        string? MemberNumber,
+        string? MemberName,
+        decimal Amount);
+}

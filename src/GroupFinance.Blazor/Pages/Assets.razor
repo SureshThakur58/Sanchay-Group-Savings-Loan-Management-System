@@ -1,0 +1,200 @@
+@attribute [Authorize]
+@page "/assets"
+@inject GroupApiClient GroupApi
+@inject AssetApiClient AssetApi
+
+<PageTitle>Asset Management</PageTitle>
+<h1>Asset Management</h1>
+<p class="muted">Register group assets, post purchases from Cash/Bank/Other funds, and record sales with calculated gain or loss.</p>
+
+@if (!string.IsNullOrWhiteSpace(_error)) { <div class="alert error">@_error</div> }
+@if (!string.IsNullOrWhiteSpace(_message)) { <div class="alert success">@_message</div> }
+@if (_loading) { <p>Loading...</p> }
+else if (_group is null) { <p>No active group is configured.</p> }
+else
+{
+    <div class="form-grid">
+        <section class="card">
+            <h2>Purchase / Register Asset</h2>
+            <div class="form-field"><label>Asset Name</label><InputText @bind-Value="_purchase.AssetName" /></div>
+            <div class="form-field"><label>Category</label><InputSelect @bind-Value="_purchase.Category"><option>Property</option><option>Land</option><option>Vehicle</option><option>Computer</option><option>Furniture</option><option>Equipment</option><option>Investment</option><option>Other</option></InputSelect></div>
+            <div class="form-field"><label>Purchase Date</label><NepaliDateInput @bind-Value="_purchase.AcquisitionDate" /></div>
+            <div class="form-field"><label>Purchase Amount</label><InputNumber @bind-Value="_purchase.AcquisitionCost" /></div>
+            <div class="form-field"><label>Location</label><InputText @bind-Value="_purchase.Location" /></div>
+            <div class="form-field"><label>Description</label><InputText @bind-Value="_purchase.Description" /></div>
+            <div class="form-field"><label>Payment Method</label><InputSelect @bind-Value="_purchase.PaymentMethod"><option>Cash</option><option>Bank</option><option>Online Transfer</option><option>Other</option></InputSelect></div>
+            <div class="form-field"><label>Payment Account</label><InputSelect @bind-Value="_purchase.FinancialAccountId"><option value="0">Select account</option>@foreach (var a in _accounts.Where(x => x.IsActive && IsFundAccount(x.AccountType))) { <option value="@a.Id">@a.AccountCode - @a.AccountName</option> }</InputSelect></div>
+            <div class="form-field"><label>Reference</label><InputText @bind-Value="_purchase.ReferenceNumber" /></div>
+            <button class="primary" @onclick="PurchaseAssetAsync">Post Asset Purchase</button>
+        </section>
+
+        <section class="card">
+            <h2>Sell Asset</h2>
+            @if (_selectedAsset is null)
+            {
+                <p class="muted">Select an active asset from the register to sell it.</p>
+            }
+            else
+            {
+                <p><strong>@_selectedAsset.AssetCode</strong> — @_selectedAsset.AssetName</p>
+                <p>Book Value: <strong>NPR @_selectedAsset.BookValue.ToString("N2")</strong></p>
+                <div class="form-field"><label>Sale Date</label><NepaliDateInput @bind-Value="_sale.SaleDate" /></div>
+                <div class="form-field"><label>Sale Amount</label><InputNumber @bind-Value="_sale.SaleAmount" /></div>
+                <div class="form-field"><label>Receipt / Payment Method</label><InputSelect @bind-Value="_sale.PaymentMethod"><option>Cash</option><option>Bank</option><option>Online Transfer</option><option>Other</option></InputSelect></div>
+                <div class="form-field"><label>Receiving Account</label><InputSelect @bind-Value="_sale.FinancialAccountId"><option value="0">Select account</option>@foreach (var a in _accounts.Where(x => x.IsActive && IsFundAccount(x.AccountType))) { <option value="@a.Id">@a.AccountCode - @a.AccountName</option> }</InputSelect></div>
+                <div class="form-field"><label>Reference</label><InputText @bind-Value="_sale.ReferenceNumber" /></div>
+                <div class="form-field"><label>Description</label><InputText @bind-Value="_sale.Description" /></div>
+                <button class="primary" @onclick="SellAssetAsync">Post Asset Sale</button>
+            }
+        </section>
+    </div>
+
+    <section class="card">
+        <h2>Asset Register</h2>
+        <div class="form-field"><label>Show</label><InputSelect @bind-Value="_showInactive" @bind:after="LoadAssetsAsync"><option value="false">Active Assets</option><option value="true">All Assets</option></InputSelect></div>
+        <div class="table-wrapper"><table class="data-table"><thead><tr><th>Asset No</th><th>Name</th><th>Category</th><th>Purchase Date</th><th>Cost</th><th>Book Value</th><th>Location</th><th>Status</th><th>Action</th></tr></thead><tbody>
+        @foreach (var asset in _assets)
+        {
+            <tr>
+                <td>@asset.AssetCode</td>
+                <td>@asset.AssetName</td>
+                <td>@asset.Category</td>
+                <td>@asset.AcquisitionDate.ToNepaliDateString()</td>
+                <td>NPR @asset.AcquisitionCost.ToString("N2")</td>
+                <td>NPR @asset.BookValue.ToString("N2")</td>
+                <td>@asset.Location</td>
+                <td>@asset.Status</td>
+                <td>
+                    @if (asset.IsActive) { <button class="secondary" @onclick="() => SelectForSale(asset)">Sell</button> }
+                    <button class="secondary" @onclick="() => ViewTransactionsAsync(asset)">History</button>
+                </td>
+            </tr>
+        }
+        </tbody></table></div>
+    </section>
+
+    @if (_selectedAsset is not null && _transactions.Count > 0)
+    {
+        <section class="card">
+            <h2>Transaction History — @_selectedAsset.AssetCode</h2>
+            <div class="table-wrapper"><table class="data-table"><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Book Value</th><th>Gain/Loss</th><th>Financial Transaction</th><th>Description</th></tr></thead><tbody>
+            @foreach (var tx in _transactions)
+            {
+                <tr>
+                    <td>@tx.TransactionDate.ToNepaliDateString()</td>
+                    <td>@tx.TransactionType</td>
+                    <td>NPR @tx.Amount.ToString("N2")</td>
+                    <td>@(tx.BookValueAtSale.HasValue ? $"NPR {tx.BookValueAtSale.Value:N2}" : "—")</td>
+                    <td>@(tx.GainLoss.HasValue ? $"NPR {tx.GainLoss.Value:N2}" : "—")</td>
+                    <td>@tx.FinancialTransactionNumber</td>
+                    <td>@tx.Description</td>
+                </tr>
+            }
+            </tbody></table></div>
+        </section>
+    }
+}
+
+@code {
+    private static readonly string[] FundAccountTypes = ["Cash", "Bank", "Other"];
+    private GroupModel? _group;
+    private List<AssetModel> _assets = [];
+    private List<AssetTransactionModel> _transactions = [];
+    private List<AssetFinancialAccountModel> _accounts = [];
+    private CreateAssetModel _purchase = new() { AcquisitionDate = DateTime.Today, Category = "Other", PaymentMethod = "Cash" };
+    private SellAssetModel _sale = new() { SaleDate = DateTime.Today, PaymentMethod = "Cash" };
+    private AssetModel? _selectedAsset;
+    private bool _showInactive;
+    private bool _loading = true;
+    private string? _error;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = _message = null;
+        var groups = await GroupApi.GetGroupsAsync();
+        if (!groups.Success || groups.Groups is null || groups.Groups.Count == 0)
+        {
+            _error = groups.Error ?? "Unable to load the active group.";
+            _loading = false;
+            return;
+        }
+
+        _group = groups.Groups[0];
+        _purchase.GroupId = _group.Id;
+        var accounts = await AssetApi.GetAccountsAsync(_group.Id);
+        if (!accounts.Success)
+        {
+            _error = accounts.Error;
+            _loading = false;
+            return;
+        }
+        _accounts = accounts.Data?.ToList() ?? [];
+        await LoadAssetsAsync();
+        _loading = false;
+    }
+
+    private async Task LoadAssetsAsync()
+    {
+        if (_group is null) return;
+        var result = await AssetApi.GetAssetsAsync(_group.Id, _showInactive);
+        if (!result.Success) { _error = result.Error; return; }
+        _assets = result.Data?.ToList() ?? [];
+    }
+
+    private async Task PurchaseAssetAsync()
+    {
+        _error = _message = null;
+        if (_group is null) return;
+        if (string.IsNullOrWhiteSpace(_purchase.AssetName)) { _error = "Asset name is required."; return; }
+        if (_purchase.AcquisitionCost <= 0) { _error = "Purchase amount must be greater than zero."; return; }
+        if (_purchase.FinancialAccountId <= 0) { _error = "Select a payment account."; return; }
+        _purchase.GroupId = _group.Id;
+        var result = await AssetApi.CreateAssetAsync(_purchase);
+        if (!result.Success) { _error = result.Error; return; }
+        _message = $"Asset {result.Data?.AssetCode} purchased successfully.";
+        _purchase = new() { GroupId = _group.Id, AcquisitionDate = DateTime.Today, Category = "Other", PaymentMethod = "Cash" };
+        await LoadAssetsAsync();
+    }
+
+    private void SelectForSale(AssetModel asset)
+    {
+        _selectedAsset = asset;
+        _transactions = [];
+        _sale = new() { SaleDate = DateTime.Today, PaymentMethod = "Cash" };
+        _error = _message = null;
+    }
+
+    private async Task SellAssetAsync()
+    {
+        _error = _message = null;
+        if (_selectedAsset is null) return;
+        if (_sale.SaleAmount <= 0) { _error = "Sale amount must be greater than zero."; return; }
+        if (_sale.FinancialAccountId <= 0) { _error = "Select a receiving account."; return; }
+        var result = await AssetApi.SellAssetAsync(_selectedAsset.Id, _sale);
+        if (!result.Success) { _error = result.Error; return; }
+        var gainLoss = result.Data?.GainLoss ?? 0m;
+        _message = gainLoss > 0m
+            ? $"Asset sold successfully. Gain: NPR {gainLoss:N2}."
+            : gainLoss < 0m
+                ? $"Asset sold successfully. Loss: NPR {Math.Abs(gainLoss):N2}."
+                : "Asset sold successfully with no gain or loss.";
+        await LoadAssetsAsync();
+        _selectedAsset = null;
+        _transactions = [];
+    }
+
+    private async Task ViewTransactionsAsync(AssetModel asset)
+    {
+        _error = null;
+        _selectedAsset = asset;
+        var result = await AssetApi.GetTransactionsAsync(asset.Id);
+        if (!result.Success) { _error = result.Error; return; }
+        _transactions = result.Data?.ToList() ?? [];
+    }
+
+    private static bool IsFundAccount(string type) => FundAccountTypes.Contains(type, StringComparer.OrdinalIgnoreCase);
+}

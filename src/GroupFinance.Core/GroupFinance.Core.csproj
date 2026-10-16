@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>GroupFinance.Core</RootNamespace>
+    <AssemblyName>GroupFinance.Core</AssemblyName>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,98 @@
+@inherits LayoutComponentBase
+@inject CustomAuthenticationStateProvider AuthState
+@inject AuthApiClient Auth
+@inject NavigationManager Navigation
+@inject GroupApiClient GroupApi
+
+<div class="app-shell">
+    <header class="topbar">
+        <div class="topbar-left">
+            <button class="mobile-menu-button" type="button" aria-label="Toggle navigation" @onclick="ToggleSidebar">☰</button>
+            <a class="topbar-brand" href="/">
+                <img src="/img/logo-icon.svg" class="topbar-logo" alt="Sanchay" />
+                <span class="topbar-names"><strong>Sanchay</strong><small>Group Savings &amp; Loan Management · @_groupName</small></span>
+            </a>
+        </div>
+        <AuthorizeView>
+            <Authorized>
+                <div class="topbar-right">
+                    <div class="nepali-today" title="Nepali Bikram Sambat date"><span>आज</span><strong>@NepaliDateFormatter.Today()</strong></div>
+                    <a class="topbar-notification" href="/notifications" title="Notifications">◌</a>
+                    <div class="user-chip">
+                        <span class="avatar">@Initials(context.User)</span>
+                        <span class="user-details"><strong>@DisplayName(context.User)</strong><small>@PrimaryRole(context.User)</small></span>
+                    </div>
+                    <button class="signout-button" @onclick="Logout">Sign out</button>
+                </div>
+            </Authorized>
+        </AuthorizeView>
+    </header>
+
+    <div class="app-body">
+        <AuthorizeView>
+            <Authorized>
+                <aside class="sidebar @(sidebarOpen ? "sidebar-open" : "")"><NavMenu /></aside>
+                @if (sidebarOpen) { <button class="sidebar-backdrop" aria-label="Close navigation" @onclick="CloseSidebar"></button> }
+            </Authorized>
+        </AuthorizeView>
+        <main class="main-content">
+            <ErrorBoundary @ref="_errorBoundary">
+                <ChildContent>@Body</ChildContent>
+                <ErrorContent Context="pageException">
+                    <section class="page-error-card">
+                        <span class="eyebrow">PAGE ERROR</span>
+                        <h2>We could not display this section.</h2>
+                        <p>Please refresh this page. Your saved financial data is not changed by this display error.</p>
+                        <button class="primary-button" @onclick="RecoverPage">Reload Section</button>
+                    </section>
+                </ErrorContent>
+            </ErrorBoundary>
+        </main>
+    </div>
+</div>
+
+@code {
+    private bool sidebarOpen;
+    private ErrorBoundary? _errorBoundary;
+    private string _groupName = "Configured Group";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            if (state.User.Identity?.IsAuthenticated == true)
+            {
+                var result = await GroupApi.GetGroupsAsync();
+                if (result.Success && result.Groups is { Count: > 0 })
+                    _groupName = result.Groups[0].Name;
+            }
+        }
+        catch { }
+    }
+
+    private void RecoverPage() => _errorBoundary?.Recover();
+
+    private void ToggleSidebar() => sidebarOpen = !sidebarOpen;
+    private void CloseSidebar() => sidebarOpen = false;
+
+    private void Logout()
+    {
+        Auth.Logout();
+        Navigation.NavigateTo("/login", replace: true);
+    }
+
+    private static string DisplayName(System.Security.Claims.ClaimsPrincipal user) =>
+        user.FindFirst("full_name")?.Value ?? user.Identity?.Name ?? "User";
+
+    private static string PrimaryRole(System.Security.Claims.ClaimsPrincipal user) =>
+        user.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value ?? "User";
+
+    private static string Initials(System.Security.Claims.ClaimsPrincipal user)
+    {
+        var name = DisplayName(user).Trim();
+        if (string.IsNullOrWhiteSpace(name)) return "U";
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length == 1 ? parts[0][..Math.Min(2, parts[0].Length)].ToUpperInvariant() : $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[^1][0])}";
+    }
+}

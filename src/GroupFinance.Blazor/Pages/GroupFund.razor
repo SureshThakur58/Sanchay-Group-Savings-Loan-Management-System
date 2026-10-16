@@ -1,0 +1,164 @@
+@attribute [Authorize]
+@page "/group-fund"
+@inject GroupApiClient GroupApi
+@inject GroupFundApiClient FundApi
+
+<PageTitle>Group Fund / Cash-Bank</PageTitle>
+
+<div class="content-header">
+    <div>
+        <span class="eyebrow">FUND &amp; TREASURY</span>
+        <h1>Group Fund / Cash-Bank</h1>
+        <p>Manage opening fund, cash and bank accounts, transfers, and the transaction-based fund position.</p>
+    </div>
+    @if (_group is not null) { <div class="page-context-badge"><span>Group</span><strong>@_group.Name</strong><small>@NepaliDateFormatter.Today() BS</small></div> }
+</div>
+
+@if (!string.IsNullOrWhiteSpace(_error)) { <div class="alert error">@_error</div> }
+@if (!string.IsNullOrWhiteSpace(_message)) { <div class="alert success">@_message</div> }
+@if (_loading) { <section class="setup-card"><div class="loading-state"><span class="loading-dot"></span> Loading fund position...</div></section> }
+else if (_group is null) { <section class="setup-card"><p>No active group is configured.</p></section> }
+else
+{
+    <section class="card-grid fund-summary-grid">
+        <div class="summary-card"><span>Opening Fund</span><strong>NPR @_summary.OpeningFund.ToString("N2")</strong></div>
+        <div class="summary-card"><span>Member Contributions</span><strong>NPR @_summary.MemberContributions.ToString("N2")</strong></div>
+        <div class="summary-card"><span>Loan Interest</span><strong>NPR @_summary.LoanInterest.ToString("N2")</strong></div>
+        <div class="summary-card summary-card-emphasis"><span>Total Available Fund</span><strong>NPR @_summary.TotalAvailableFund.ToString("N2")</strong></div>
+        <div class="summary-card"><span>Loans Given</span><strong>NPR @_summary.LoansGiven.ToString("N2")</strong></div>
+        <div class="summary-card"><span>Expenses</span><strong>NPR @_summary.Expenses.ToString("N2")</strong></div>
+        <div class="summary-card"><span>Asset Purchases</span><strong>NPR @_summary.AssetPurchases.ToString("N2")</strong></div>
+        <div class="summary-card summary-card-closing"><span>Closing Fund</span><strong>NPR @_summary.ClosingFund.ToString("N2")</strong></div>
+        <div class="summary-card"><span>Cash Balance</span><strong>NPR @_summary.CashBalance.ToString("N2")</strong></div>
+        <div class="summary-card"><span>Bank Balance</span><strong>NPR @_summary.BankBalance.ToString("N2")</strong></div>
+    </section>
+
+    <div class="form-grid fund-action-grid">
+        <section class="card fund-action-card">
+            <div class="section-heading"><div><span class="eyebrow">OPENING ENTRY</span><h2>Opening Fund</h2><p class="muted">Record the group's initial fund into Cash or Bank. The offset is Opening Fund Equity.</p></div><span class="action-icon">↥</span></div>
+            <div class="form-field"><label>Fund Account</label><InputSelect @bind-Value="_opening.FinancialAccountId"><option value="0">Select account</option>@foreach (var account in _accounts.Where(x => x.IsActive && IsFundAccount(x.AccountType))) { <option value="@account.Id">@account.AccountCode - @account.AccountName</option> }</InputSelect></div>
+            <div class="form-grid"><div class="form-field"><label>Amount</label><InputNumber @bind-Value="_opening.Amount" /></div><div class="form-field"><label>Date (B.S.)</label><NepaliDateInput @bind-Value="_opening.TransactionDate" /></div></div>
+            <div class="form-field"><label>Reference</label><InputText @bind-Value="_opening.ReferenceNumber" /></div>
+            <div class="form-field"><label>Description</label><InputText @bind-Value="_opening.Description" /></div>
+            <button class="primary-button" @onclick="RecordOpeningFundAsync">Record Opening Fund</button>
+        </section>
+
+        <section class="card fund-action-card">
+            <div class="section-heading"><div><span class="eyebrow">BANKING</span><h2>Add Cash / Bank Account</h2><p class="muted">Create another operating account for the group's treasury.</p></div><span class="action-icon">▣</span></div>
+            <div class="form-field"><label>Account Code</label><InputText @bind-Value="_newAccount.AccountCode" /></div>
+            <div class="form-field"><label>Account Name</label><InputText @bind-Value="_newAccount.AccountName" /></div>
+            <div class="form-field"><label>Account Type</label><InputSelect @bind-Value="_newAccount.AccountType"><option value="Cash">Cash</option><option value="Bank">Bank</option><option value="Other">Other</option></InputSelect></div>
+            <button class="primary-button" @onclick="CreateAccountAsync">Add Account</button>
+        </section>
+
+        <section class="card fund-action-card">
+            <div class="section-heading"><div><span class="eyebrow">INTERNAL TRANSFER</span><h2>Transfer Between Accounts</h2><p class="muted">Move funds between active Cash, Bank or Other accounts.</p></div><span class="action-icon">⇄</span></div>
+            <div class="form-field"><label>From Account</label><InputSelect @bind-Value="_transfer.FromFinancialAccountId"><option value="0">Select source</option>@foreach (var account in _accounts.Where(x => x.IsActive && IsFundAccount(x.AccountType))) { <option value="@account.Id">@account.AccountCode - @account.AccountName (NPR @account.Balance.ToString("N2"))</option> }</InputSelect></div>
+            <div class="form-field"><label>To Account</label><InputSelect @bind-Value="_transfer.ToFinancialAccountId"><option value="0">Select destination</option>@foreach (var account in _accounts.Where(x => x.IsActive && IsFundAccount(x.AccountType))) { <option value="@account.Id">@account.AccountCode - @account.AccountName</option> }</InputSelect></div>
+            <div class="form-grid"><div class="form-field"><label>Amount</label><InputNumber @bind-Value="_transfer.Amount" /></div><div class="form-field"><label>Date (B.S.)</label><NepaliDateInput @bind-Value="_transfer.TransactionDate" /></div></div>
+            <div class="form-field"><label>Reference</label><InputText @bind-Value="_transfer.ReferenceNumber" /></div>
+            <div class="form-field"><label>Description</label><InputText @bind-Value="_transfer.Description" /></div>
+            <button class="primary-button" @onclick="TransferAsync">Transfer Fund</button>
+        </section>
+    </div>
+
+    <section class="card">
+        <div class="section-heading"><div><span class="eyebrow">TREASURY POSITION</span><h2>Cash / Bank Accounts</h2><p class="muted">Current balances derived from posted financial transactions.</p></div><span class="account-count">@FundAccountCount accounts</span></div>
+        <div class="table-wrapper"><table class="data-table"><thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Debit</th><th>Credit</th><th>Balance</th><th>Status</th></tr></thead><tbody>
+        @foreach (var account in _accounts.Where(x => IsFundAccount(x.AccountType))) { <tr><td><strong>@account.AccountCode</strong></td><td>@account.AccountName</td><td><span class="account-type">@account.AccountType</span></td><td>NPR @account.TotalDebit.ToString("N2")</td><td>NPR @account.TotalCredit.ToString("N2")</td><td><strong>NPR @account.Balance.ToString("N2")</strong></td><td><span class="badge @(account.IsActive ? "active" : "inactive")">@(account.IsActive ? "Active" : "Inactive")</span></td></tr> }
+        </tbody></table></div>
+    </section>
+}
+
+@code {
+    private GroupModel? _group;
+    private GroupFundSummaryModel _summary = new(0, DateTime.Today, DateTime.Today, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    private List<GroupFundAccountModel> _accounts = [];
+    private CreateFundAccountModel _newAccount = new()
+    {
+        AccountType = "Cash"
+    };
+    private CreateOpeningFundModel _opening = new()
+    {
+        TransactionDate = DateTime.Today
+    };
+    private FundTransferModel _transfer = new()
+    {
+        TransactionDate = DateTime.Today
+    };
+    private bool _loading = true;
+    private string? _error;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true; _error = null;
+        var groups = await GroupApi.GetGroupsAsync();
+        if (!groups.Success || groups.Groups is null || groups.Groups.Count == 0) { _error = groups.Error ?? "Unable to load the active group."; _loading = false; return; }
+        _group = groups.Groups[0];
+        _opening.GroupId = _group.Id;
+        _transfer.GroupId = _group.Id;
+        var accounts = await FundApi.GetAccountsAsync(_group.Id);
+        if (!accounts.Success) { _error = accounts.Error; _loading = false; return; }
+        _accounts = accounts.Data?.ToList() ?? [];
+        var summary = await FundApi.GetSummaryAsync(_group.Id);
+        if (!summary.Success || summary.Data is null) { _error = summary.Error; _loading = false; return; }
+        _summary = summary.Data;
+        _loading = false;
+    }
+
+    private async Task CreateAccountAsync()
+    {
+        _error = _message = null;
+        if (_group is null) return;
+        if (string.IsNullOrWhiteSpace(_newAccount.AccountCode) || string.IsNullOrWhiteSpace(_newAccount.AccountName)) { _error = "Account code and account name are required."; return; }
+        _newAccount.GroupId = _group.Id;
+        var result = await FundApi.CreateAccountAsync(_newAccount);
+        if (!result.Success) { _error = result.Error; return; }
+        _message = "Financial account created successfully.";
+        _newAccount = new()
+        {
+            GroupId = _group.Id,
+            AccountType = "Cash"
+        };
+        await LoadAsync();
+    }
+
+    private async Task RecordOpeningFundAsync()
+    {
+        _error = _message = null;
+        if (_opening.FinancialAccountId <= 0 || _opening.Amount <= 0) { _error = "Select a fund account and enter an amount greater than zero."; return; }
+        var result = await FundApi.CreateOpeningFundAsync(_opening);
+        if (!result.Success) { _error = result.Error; return; }
+        _message = "Opening fund recorded successfully."; await LoadAsync();
+    }
+
+    private async Task TransferAsync()
+    {
+        _error = _message = null;
+        if (_transfer.FromFinancialAccountId <= 0 || _transfer.ToFinancialAccountId <= 0 || _transfer.Amount <= 0) { _error = "Select different source/destination accounts and enter an amount greater than zero."; return; }
+        var result = await FundApi.TransferAsync(_transfer);
+        if (!result.Success) { _error = result.Error; return; }
+        _message = $"Fund transfer {result.Data?.TransactionNumber} posted successfully."; await LoadAsync();
+    }
+
+    private int FundAccountCount
+    {
+        get
+        {
+            var count = 0;
+            foreach (var account in _accounts)
+            {
+                if (IsFundAccount(account.AccountType)) count++;
+            }
+            return count;
+        }
+    }
+
+    private static bool IsFundAccount(string type) => type.Equals("Cash", StringComparison.OrdinalIgnoreCase) || type.Equals("Bank", StringComparison.OrdinalIgnoreCase) || type.Equals("Other", StringComparison.OrdinalIgnoreCase);
+}

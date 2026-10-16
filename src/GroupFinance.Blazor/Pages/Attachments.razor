@@ -1,0 +1,203 @@
+@page "/attachments"
+@attribute [Authorize]
+@inject AttachmentApiClient AttachmentApi
+@inject IJSRuntime JS
+
+<PageTitle>File Storage</PageTitle>
+
+<div class="page-container">
+    <div class="page-heading">
+        <div>
+            <h1>File Storage</h1>
+            <p class="page-description">Upload, view and remove supported attachments stored by the API.</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="alert error">@_error</div>
+    }
+
+    <section class="setup-card">
+        <div class="form-grid">
+            <div class="form-field">
+                <label>Entity</label>
+                <select @bind="_entityName">
+                    @foreach (var entity in SupportedEntities)
+                    {
+                        <option value="@entity">@entity</option>
+                    }
+                </select>
+            </div>
+            <div class="form-field">
+                <label>Entity ID</label>
+                <InputNumber @bind-Value="_entityId" />
+            </div>
+        </div>
+
+        <div class="form-field">
+            <label>File</label>
+            <InputFile OnChange="OnFileSelected" accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx" />
+            <small class="muted">Maximum 10 MB. PDF, JPG, JPEG, PNG, DOCX and XLSX.</small>
+        </div>
+
+        <div class="button-row">
+            <button class="primary-button" @onclick="LoadAsync" disabled="@_busy">Load Attachments</button>
+            <button class="secondary-button" @onclick="UploadAsync" disabled="@(_busy || _selectedFile is null)">Upload File</button>
+        </div>
+    </section>
+
+    <section class="setup-card">
+        <h2>Attachments</h2>
+        @if (_loading)
+        {
+            <p>Loading...</p>
+        }
+        else if (_attachments.Count == 0)
+        {
+            <p class="muted">No attachments found for this record.</p>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead><tr><th>File</th><th>Type</th><th>Size</th><th>Created</th><th>Action</th></tr></thead>
+                    <tbody>
+                    @foreach (var item in _attachments)
+                    {
+                        <tr>
+                            <td>@item.OriginalFileName</td>
+                            <td>@item.ContentType</td>
+                            <td>@FormatSize(item.FileSizeBytes)</td>
+                            <td>@item.CreatedAtUtc.ToNepaliDateTimeString()</td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-primary" @onclick="() => DownloadAsync(item.Id)">Download</button>
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(item.Id)">Delete</button>
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    private static readonly string[] SupportedEntities =
+    [
+        "Group", "Member", "ContributionSchedule", "ContributionPayment",
+        "LoanApplication", "Loan", "LoanPayment", "FinancialTransaction",
+        "ProfitDistribution", "Expense", "Asset", "AssetTransaction"
+    ];
+
+    private string _entityName = "FinancialTransaction";
+    private long _entityId = 1;
+    private IBrowserFile? _selectedFile;
+    private readonly List<AttachmentModel> _attachments = [];
+    private bool _loading;
+    private bool _busy;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private void OnFileSelected(InputFileChangeEventArgs e)
+    {
+        _selectedFile = e.File;
+        _error = null;
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            var result = await AttachmentApi.ListAsync(_entityName, _entityId);
+            if (!result.Success || result.Data is null)
+            {
+                _error = result.Error ?? "Unable to load attachments.";
+                _attachments.Clear();
+                return;
+            }
+
+            _attachments.Clear();
+            _attachments.AddRange(result.Data);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task UploadAsync()
+    {
+        if (_selectedFile is null) return;
+
+        _busy = true;
+        _error = null;
+        try
+        {
+            var result = await AttachmentApi.UploadAsync(_entityName, _entityId, _selectedFile);
+            if (!result.Success)
+            {
+                _error = result.Error;
+                return;
+            }
+
+            _selectedFile = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DownloadAsync(long id)
+    {
+        _error = null;
+        var result = await AttachmentApi.DownloadAsync(id);
+        if (!result.Success || result.Data is null)
+        {
+            _error = result.Error ?? "Unable to download attachment.";
+            return;
+        }
+
+        var base64 = Convert.ToBase64String(result.Data);
+        await JS.InvokeVoidAsync(
+            "groupFinanceDownloadFile",
+            result.FileName ?? "attachment",
+            result.ContentType ?? "application/octet-stream",
+            base64);
+    }
+
+    private async Task DeleteAsync(long id)
+    {
+        _error = null;
+        var result = await AttachmentApi.DeleteAsync(id);
+        if (!result.Success)
+        {
+            _error = result.Error;
+            return;
+        }
+
+        await LoadAsync();
+    }
+
+    private static string FormatSize(long bytes) =>
+        bytes < 1024 ? $"{bytes} B" :
+        bytes < 1024 * 1024 ? $"{bytes / 1024d:N1} KB" :
+        $"{bytes / (1024d * 1024d):N1} MB";
+}

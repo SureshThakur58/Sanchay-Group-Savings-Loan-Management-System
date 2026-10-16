@@ -1,0 +1,120 @@
+@attribute [Authorize]
+@page "/profit-distribution"
+@inject GroupApiClient GroupApi
+@inject ProfitDistributionApiClient DistributionApi
+
+<PageTitle>Profit Distribution</PageTitle>
+<h1>Profit Distribution</h1>
+<p class="muted">Preview and post the group's distributable profit using Equal, Contribution-Based, or Weighted allocation.</p>
+
+@if (!string.IsNullOrWhiteSpace(_error)) { <div class="alert error">@_error</div> }
+@if (!string.IsNullOrWhiteSpace(_message)) { <div class="alert success">@_message</div> }
+@if (_loading) { <p>Loading...</p> }
+else if (_group is null) { <p>No active group is configured.</p> }
+else
+{
+    <section class="card">
+        <h2>Distribution Setup</h2>
+        <div class="form-grid">
+            <div class="form-field"><label>Period Start</label><NepaliDateInput @bind-Value="_request.PeriodStart" /></div>
+            <div class="form-field"><label>Period End</label><NepaliDateInput @bind-Value="_request.PeriodEnd" /></div>
+            <div class="form-field"><label>Distribution Method</label>
+                <select @bind="_request.DistributionMethod">
+                    <option value="Equal">Equal</option>
+                    <option value="ContributionBased">Contribution-Based</option>
+                    <option value="Weighted">Weighted</option>
+                </select>
+            </div>
+            <div class="form-field"><label>Reference Number</label><InputText @bind-Value="_request.ReferenceNumber" /></div>
+            <div class="form-field"><label>Description</label><InputText @bind-Value="_request.Description" /></div>
+        </div>
+        <div class="button-row">
+            <button class="secondary" @onclick="PreviewAsync">Preview Distribution</button>
+            <button class="primary" @onclick="PostAsync">Post Distribution</button>
+        </div>
+    </section>
+
+    @if (_result is not null)
+    {
+        <section class="card">
+            <h2>@(_result.Status == "Preview" ? "Distribution Preview" : "Posted Distribution")</h2>
+            <div class="summary-grid">
+                <div><span>Net Profit</span><strong>NPR @_result.NetProfit.ToString("N2")</strong></div>
+                <div><span>Reserve</span><strong>NPR @_result.ReserveAmount.ToString("N2")</strong></div>
+                <div><span>Distributable</span><strong>NPR @_result.DistributableAmount.ToString("N2")</strong></div>
+                <div><span>Method</span><strong>@_result.DistributionMethod</strong></div>
+                <div><span>Status</span><strong>@_result.Status</strong></div>
+                @if (_result.FinancialTransactionId.HasValue) { <div><span>Financial Transaction</span><strong>#@_result.FinancialTransactionId</strong></div> }
+            </div>
+            <div class="table-wrapper"><table class="data-table"><thead><tr><th>Member</th><th>Contribution</th><th>Membership Months</th><th>Average Balance</th><th>Factor</th><th>Share</th></tr></thead><tbody>
+            @foreach (var row in _result.Details)
+            {
+                <tr><td>@row.MemberNumber - @row.MemberName</td><td>NPR @row.ContributionAmount.ToString("N2")</td><td>@row.MembershipMonths.ToString("N0")</td><td>NPR @row.AverageBalance.ToString("N2")</td><td>@row.EligibilityFactor.ToString("P4")</td><td>NPR @row.DistributedAmount.ToString("N2")</td></tr>
+            }
+            </tbody></table></div>
+        </section>
+    }
+
+    <section class="card">
+        <h2>Distribution History</h2>
+        <button class="secondary" @onclick="LoadHistoryAsync">Refresh</button>
+        <div class="table-wrapper"><table class="data-table"><thead><tr><th>Period</th><th>Method</th><th>Net Profit</th><th>Reserve</th><th>Distributed</th><th>Status</th></tr></thead><tbody>
+        @foreach (var row in _history)
+        {
+            <tr><td>@row.PeriodStart.ToNepaliDateString() - @row.PeriodEnd.ToNepaliDateString()</td><td>@row.DistributionMethod</td><td>NPR @row.NetProfit.ToString("N2")</td><td>NPR @row.ReserveAmount.ToString("N2")</td><td>NPR @row.DistributableAmount.ToString("N2")</td><td>@row.Status</td></tr>
+        }
+        </tbody></table></div>
+    </section>
+}
+
+@code {
+    private GroupModel? _group;
+    private ProfitDistributionModel _request = new();
+    private ProfitDistributionResponseModel? _result;
+    private List<ProfitDistributionResponseModel> _history = [];
+    private bool _loading = true;
+    private string? _error;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var today = DateTime.Today;
+        _request.PeriodStart = new DateTime(today.Year, 1, 1);
+        _request.PeriodEnd = today;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true; _error = _message = null;
+        var groups = await GroupApi.GetGroupsAsync();
+        if (!groups.Success || groups.Groups is null || groups.Groups.Count == 0) { _error = groups.Error ?? "Unable to load the active group."; _loading = false; return; }
+        _group = groups.Groups[0]; _request.GroupId = _group.Id;
+        await LoadHistoryAsync();
+        _loading = false;
+    }
+
+    private async Task PreviewAsync()
+    {
+        _error = _message = null; _request.GroupId = _group?.Id ?? 0;
+        var result = await DistributionApi.PreviewAsync(new ProfitDistributionPreviewModel { GroupId = _request.GroupId, PeriodStart = _request.PeriodStart, PeriodEnd = _request.PeriodEnd, DistributionMethod = _request.DistributionMethod });
+        if (!result.Success) { _error = result.Error; return; }
+        _result = result.Data; _message = "Distribution preview calculated.";
+    }
+
+    private async Task PostAsync()
+    {
+        _error = _message = null; _request.GroupId = _group?.Id ?? 0;
+        var result = await DistributionApi.CreateAsync(_request);
+        if (!result.Success) { _error = result.Error; return; }
+        _result = result.Data; _message = "Profit distribution posted successfully."; await LoadHistoryAsync();
+    }
+
+    private async Task LoadHistoryAsync()
+    {
+        if (_group is null) return;
+        var result = await DistributionApi.GetAsync(_group.Id);
+        if (!result.Success) { _error = result.Error; return; }
+        _history = result.Data?.ToList() ?? [];
+    }
+}

@@ -1,0 +1,160 @@
+@page "/receipts/{TransactionId:long}"
+@attribute [Authorize]
+@inject ReceiptApiClient ReceiptApi
+@inject IJSRuntime JS
+
+<PageTitle>Receipt</PageTitle>
+
+@if (_loading)
+{
+    <div class="setup-card"><p>Loading receipt...</p></div>
+}
+else if (!string.IsNullOrWhiteSpace(_error))
+{
+    <div class="alert error">@_error</div>
+}
+else if (_receipt is not null)
+{
+    <div class="receipt-page">
+        <div class="receipt-toolbar no-print">
+            <a class="secondary-button" href="/transactions">← Back to Ledger</a>
+            <div class="receipt-toolbar-actions">
+                <button class="primary-button" @onclick="PrintAsync">🖨 Print / Save PDF</button>
+            </div>
+        </div>
+
+        <section class="receipt-paper">
+            <div class="receipt-brand-strip"></div>
+            <div class="receipt-inner">
+                <header class="receipt-header">
+                    <div class="receipt-brand">
+                        <img src="/img/logo-icon-512.png" alt="Sanchay" />
+                        <div>
+                            <div class="receipt-brand-name">Sanchay</div>
+                            <div class="receipt-brand-sub">Group Savings &amp; Loan Management</div>
+                        </div>
+                    </div>
+                    <div class="receipt-title-block">
+                        <h1 class="receipt-title">@_receipt.ReceiptType</h1>
+                        <div class="receipt-type">Official financial transaction document</div>
+                        <div style="margin-top:8px"><span class="receipt-status">@_receipt.Status</span></div>
+                    </div>
+                </header>
+
+                <div class="receipt-group-row">
+                    <div>
+                        <div class="eyebrow">Group</div>
+                        <div class="receipt-group-name">@_receipt.GroupName</div>
+                        <div class="receipt-group-code">@_receipt.GroupCode</div>
+                    </div>
+                    <div style="text-align:right">
+                        <div class="eyebrow">Transaction Number</div>
+                        <div class="receipt-group-name">@_receipt.TransactionNumber</div>
+                    </div>
+                </div>
+
+                <div class="receipt-meta-grid">
+                    <div class="receipt-meta-item">
+                        <span>Date (B.S.)</span>
+                        <strong>@_receipt.TransactionDate.ToNepaliDateString()</strong>
+                    </div>
+                    <div class="receipt-meta-item">
+                        <span>Payment Method</span>
+                        <strong>@(_receipt.PaymentMethod ?? "-")</strong>
+                    </div>
+                    <div class="receipt-meta-item">
+                        <span>Amount</span>
+                        <strong class="receipt-amount">NPR @_receipt.Amount.ToString("N2")</strong>
+                    </div>
+                    <div class="receipt-meta-item">
+                        <span>Status</span>
+                        <strong>@_receipt.Status</strong>
+                    </div>
+                </div>
+
+                <div class="receipt-section-title">
+                    <h2>Transaction Information</h2>
+                </div>
+
+                <div class="receipt-detail-grid">
+                    <div class="receipt-detail-item">
+                        <span>Member</span>
+                        <strong>@(_receipt.MemberName is null ? "-" : $"{_receipt.MemberNumber} - {_receipt.MemberName}")</strong>
+                    </div>
+                    <div class="receipt-detail-item">
+                        <span>Reference</span>
+                        <strong>@(_receipt.ReferenceNumber ?? "-")</strong>
+                    </div>
+                    <div class="receipt-detail-item">
+                        <span>Description</span>
+                        <strong>@(_receipt.Description ?? "-")</strong>
+                    </div>
+                    <div class="receipt-detail-item">
+                        <span>Prepared By</span>
+                        <strong>@_receipt.PreparedBy</strong>
+                    </div>
+                </div>
+
+                <div class="receipt-section-title">
+                    <h2>Transaction Details</h2>
+                    <span>Double-entry financial journal</span>
+                </div>
+
+                <div class="table-wrap">
+                    <table class="data-table receipt-lines">
+                        <thead>
+                            <tr><th>Account</th><th>Description</th><th>Debit</th><th>Credit</th></tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var line in _receipt.Lines)
+                        {
+                            <tr>
+                                <td><strong>@line.AccountCode</strong><br /><span class="muted">@line.AccountName</span></td>
+                                <td>@(line.Description ?? "-")</td>
+                                <td>NPR @line.DebitAmount.ToString("N2")</td>
+                                <td>NPR @line.CreditAmount.ToString("N2")</td>
+                            </tr>
+                        }
+                        <tr class="receipt-total-row">
+                            <td colspan="2">Journal Total</td>
+                            <td>NPR @_receipt.Lines.Sum(x => x.DebitAmount).ToString("N2")</td>
+                            <td>NPR @_receipt.Lines.Sum(x => x.CreditAmount).ToString("N2")</td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="receipt-signature">
+                    <div>Prepared By — @_receipt.PreparedBy</div>
+                    <div>Authorized / Received By</div>
+                </div>
+
+                <footer class="receipt-footer">
+                    <div>Generated from the GroupFinance financial transaction journal.</div>
+                    <div>Document date: @_receipt.TransactionDate.ToNepaliDateString() (B.S.)</div>
+                </footer>
+            </div>
+        </section>
+    </div>
+}
+
+@code {
+    [Parameter] public long TransactionId { get; set; }
+
+    private ReceiptModel? _receipt;
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var result = await ReceiptApi.GetAsync(TransactionId);
+        if (!result.Success)
+            _error = result.Error;
+        else
+            _receipt = result.Data;
+
+        _loading = false;
+    }
+
+    private Task PrintAsync() => JS.InvokeVoidAsync("window.print").AsTask();
+}

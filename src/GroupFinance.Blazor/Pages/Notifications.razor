@@ -1,0 +1,18 @@
+@page "/notifications"
+@attribute [Authorize]
+@inject NotificationApiClient NotificationApi
+@inject GroupApiClient GroupApi
+<PageTitle>Notifications</PageTitle>
+<h1>Notifications</h1><p>In-app alerts for contributions, loans and profit events.</p>
+@if(!string.IsNullOrWhiteSpace(_error)){<div class="alert alert-danger">@_error</div>}
+<div class="toolbar"><button class="btn btn-primary" @onclick="EvaluateAsync" disabled="@_busy">Check for Notifications</button> <button class="btn btn-secondary" @onclick="MarkAllReadAsync" disabled="@_busy || _unreadCount==0">Mark All Read</button> <label><input type="checkbox" @bind="_unreadOnly" @bind:after="LoadAsync"/> Unread only</label></div>
+@if(_evaluation is not null){<div class="alert alert-info">Created @_evaluation.CreatedCount notification(s). Upcoming contributions: @_evaluation.UpcomingContributions; overdue contributions: @_evaluation.OverdueContributions; upcoming installments: @_evaluation.UpcomingLoanInstallments; overdue loans: @_evaluation.OverdueLoans.</div>}
+<div class="card"><div class="card-header"><strong>Notifications</strong> <span class="badge bg-primary">@_unreadCount unread</span></div>@if(_loading){<p>Loading...</p>}else if(_notifications.Count==0){<p>No notifications found.</p>}else{<table class="table"><thead><tr><th>Date</th><th>Type</th><th>Title</th><th>Message</th><th>Status</th><th></th></tr></thead><tbody>@foreach(var n in _notifications){<tr class="@(!n.IsRead?"table-primary":string.Empty)"><td>@n.CreatedAtUtc.ToNepaliDateTimeString()</td><td>@n.NotificationType</td><td><strong>@n.Title</strong></td><td>@n.Message</td><td>@(n.IsRead?"Read":"Unread")</td><td>@if(!n.IsRead){<button class="btn btn-sm btn-outline-primary" @onclick="()=>MarkReadAsync(n.Id)">Mark read</button>}</td></tr>}</tbody></table>}</div>
+@code {
+ readonly List<NotificationModel> _notifications=[]; int _unreadCount; bool _unreadOnly,_loading,_busy; string? _error; long _groupId; NotificationEvaluationModel? _evaluation;
+ protected override async Task OnInitializedAsync(){try{var g=await GroupApi.GetGroupsAsync();if(!g.Success||g.Groups is null||g.Groups.Count!=1){_error=g.Error??"Exactly one configured group is required.";return;}_groupId=g.Groups[0].Id;await LoadAsync();}catch(Exception ex){_error=ex.Message;}}
+ async Task LoadAsync(){_loading=true;_error=null;try{var r=await NotificationApi.GetAsync(_unreadOnly);if(!r.Success||r.Data is null){_error=r.Error??"Unable to load notifications.";return;}_notifications.Clear();_notifications.AddRange(r.Data.Notifications);_unreadCount=r.Data.UnreadCount;}catch(Exception ex){_error=ex.Message;}finally{_loading=false;}}
+ async Task EvaluateAsync(){_busy=true;_error=null;try{var r=await NotificationApi.EvaluateAsync(_groupId,DateTime.Today,7);if(!r.Success||r.Data is null){_error=r.Error??"Notification evaluation failed.";return;}_evaluation=r.Data;await LoadAsync();}catch(Exception ex){_error=ex.Message;}finally{_busy=false;}}
+ async Task MarkReadAsync(long id){var r=await NotificationApi.MarkReadAsync(id);if(!r.Success){_error=r.Error;return;}await LoadAsync();}
+ async Task MarkAllReadAsync(){_busy=true;try{var r=await NotificationApi.MarkAllReadAsync();if(!r.Success){_error=r.Error;return;}await LoadAsync();}finally{_busy=false;}}
+}

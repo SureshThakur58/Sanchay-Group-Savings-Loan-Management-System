@@ -1,0 +1,42 @@
+@using GroupFinance.Blazor.Services
+
+<div class="settings-section">
+    <h3>Contribution Rules</h3>
+    <div class="form-grid">
+        <div class="form-field"><label>Contribution Amount</label><InputNumber @bind-Value="Model.DefaultContributionAmount" disabled="@ReadOnly" /></div>
+        <div class="form-field"><label>Contribution Frequency</label><InputSelect @bind-Value="Model.ContributionFrequency" disabled="@ReadOnly"><option>Monthly</option><option>Quarterly</option><option>Half-Yearly</option><option>Yearly</option><option>Custom</option></InputSelect></div>
+        <div class="form-field"><label>Late Fee Rate (%)</label><InputNumber @bind-Value="Model.ContributionLateFeeRate" disabled="@ReadOnly" /></div>
+    </div>
+
+    <h3>Loan Rules</h3>
+    <div class="form-grid">
+        <div class="form-field"><label>Interest Rate (%)</label><InputNumber @bind-Value="Model.DefaultLoanInterestRate" disabled="@ReadOnly" /></div>
+        <div class="form-field"><label>Calculation Method</label><InputSelect @bind-Value="Model.LoanInterestMethod" disabled="@ReadOnly"><option>Flat</option><option>ReducingBalance</option></InputSelect></div>
+        <div class="form-field"><label>Default Duration</label><InputNumber @bind-Value="Model.DefaultLoanDuration" disabled="@ReadOnly" /></div>
+        <div class="form-field"><label>Duration Unit</label><InputSelect @bind-Value="Model.LoanDurationUnit" disabled="@ReadOnly"><option>Months</option><option>Years</option></InputSelect></div>
+        <div class="form-field"><label>Installment Frequency</label><InputSelect @bind-Value="Model.LoanInstallmentFrequency" disabled="@ReadOnly"><option>Monthly</option></InputSelect></div>
+        <div class="form-field"><label>Contribution Multiplier</label><InputNumber @bind-Value="Model.LoanContributionMultiplier" disabled="@ReadOnly" /></div>
+        <div class="form-field"><label>Minimum Membership (months)</label><InputNumber @bind-Value="Model.MinimumMembershipMonthsForLoan" disabled="@ReadOnly" /></div>
+        <div class="form-field"><label>Maximum Active Loans / Member</label><InputNumber @bind-Value="Model.MaximumActiveLoansPerMember" disabled="@ReadOnly" /></div>
+        <div class="form-field"><label>Required Guarantors</label><InputNumber @bind-Value="Model.RequiredGuarantors" disabled="@ReadOnly" /></div>
+    </div>
+
+    <h3>Profit Rules</h3>
+    <div class="form-grid">
+        <div class="form-field"><label>Reserve Rate (%)</label><InputNumber @bind-Value="Model.ProfitReserveRate" disabled="@ReadOnly" /></div>
+        <div class="form-field"><label>Distribution Method</label><InputSelect @bind-Value="Model.ProfitDistributionMethod" disabled="@ReadOnly"><option>Equal</option><option>ContributionBased</option><option>Weighted</option></InputSelect></div>
+    </div>
+
+    <h3>Financial Posting Rules</h3>
+    <div class="form-grid">
+        <div class="form-field"><label>Date Format</label><InputText @bind-Value="Model.DateFormat" disabled="@ReadOnly" /></div>
+        <div class="form-field"><label>Monetary Precision</label><InputNumber @bind-Value="Model.MonetaryPrecision" disabled="@ReadOnly" /></div>
+        <div class="form-field checkbox-field"><label><InputCheckbox @bind-Value="Model.AllowBackdatedTransactions" disabled="@ReadOnly" /> Allow backdated transactions</label></div>
+        <div class="form-field checkbox-field"><label><InputCheckbox @bind-Value="Model.AllowFutureFinancialPosting" disabled="@ReadOnly" /> Allow future financial posting</label></div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public GroupSettingsModel Model { get; set; } = default!;
+    [Parameter] public bool ReadOnly { get; set; }
+}

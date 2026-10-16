@@ -1,0 +1,334 @@
+@attribute [Authorize]
+@page "/reports"
+@inject GroupApiClient GroupApi
+@inject MemberApiClient MemberApi
+@inject ReportsApiClient ReportsApi
+
+<PageTitle>Reports</PageTitle>
+
+<div class="reports-page">
+    <div class="page-heading no-print">
+        <div>
+            <h1>Reports</h1>
+            <p class="page-description">Financial, member, contribution, loan, expense, asset and statement reports for the configured group.</p>
+        </div>
+        <button class="secondary-button" type="button" onclick="window.print()">Print / Save PDF</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="alert error">@_error</div>
+    }
+
+    @if (_loading)
+    {
+        <section class="setup-card"><p>Loading report options...</p></section>
+    }
+    else if (_group is null)
+    {
+        <section class="setup-card"><p>No active group is configured.</p></section>
+    }
+    else
+    {
+        <section class="setup-card no-print">
+            <div class="report-toolbar">
+                <div class="form-field">
+                    <label>Report</label>
+                    <select @bind="_report">
+                        @foreach (var item in ReportOptions)
+                        {
+                            <option value="@item.Key">@item.Value</option>
+                        }
+                    </select>
+                </div>
+                <div class="form-field">
+                    <label>From Date</label>
+                    <NepaliDateInput @bind-Value="_fromDate" />
+                </div>
+                <div class="form-field">
+                    <label>To / As of Date</label>
+                    <NepaliDateInput @bind-Value="_toDate" />
+                </div>
+                @if (NeedsMemberFilter)
+                {
+                    <div class="form-field">
+                        <label>Member</label>
+                        <select @bind="_memberId">
+                            <option value="0">All members</option>
+                            @foreach (var member in _members)
+                            {
+                                <option value="@member.Id">@member.MemberNumber - @member.FullName</option>
+                            }
+                        </select>
+                    </div>
+                }
+                @if (_report == "assets")
+                {
+                    <div class="form-field checkbox-field">
+                        <label><input type="checkbox" @bind="_includeInactiveAssets" /> Include inactive / sold</label>
+                    </div>
+                }
+                <button class="primary-button" @onclick="LoadReportAsync" disabled="@_reportLoading">
+                    @(_reportLoading ? "Loading..." : "Run Report")
+                </button>
+            </div>
+        </section>
+
+        @if (_reportLoading)
+        {
+            <section class="setup-card"><p>Loading report...</p></section>
+        }
+        else if (_report == "summary" && _summary is not null)
+        {
+            <section class="setup-card report-sheet">
+                <ReportHeader Title="Group Financial Summary" GroupName="@_group.Name" AsOfDate="@_toDate" />
+                <div class="report-summary-grid">
+                    <ReportMetric Label="Total Members" Value="@_summary.TotalMembers.ToString()" />
+                    <ReportMetric Label="Active Members" Value="@_summary.ActiveMembers.ToString()" />
+                    <ReportMetric Label="Total Contributions" Value="@Money(_summary.TotalContributions)" />
+                    <ReportMetric Label="Total Loans" Value="@Money(_summary.TotalLoans)" />
+                    <ReportMetric Label="Outstanding Loans" Value="@Money(_summary.OutstandingLoans)" />
+                    <ReportMetric Label="Interest Earned" Value="@Money(_summary.InterestEarned)" />
+                    <ReportMetric Label="Expenses" Value="@Money(_summary.Expenses)" />
+                    <ReportMetric Label="Net Profit" Value="@Money(_summary.NetProfit)" />
+                    <ReportMetric Label="Available Cash" Value="@Money(_summary.AvailableCash)" />
+                    <ReportMetric Label="Overdue Loans" Value="@_summary.OverdueLoans.ToString()" />
+                    <ReportMetric Label="Overdue Amount" Value="@Money(_summary.OverdueAmount)" />
+                </div>
+            </section>
+        }
+        else if (_report == "members")
+        {
+            <section class="setup-card report-sheet">
+                <ReportHeader Title="Member List" GroupName="@_group.Name" AsOfDate="@_toDate" />
+                <table class="data-table"><thead><tr><th>Code</th><th>Name</th><th>Mobile</th><th>Email</th><th>Joining Date</th><th>Status</th><th>Contribution</th><th>Loan</th><th>Principal Outstanding</th></tr></thead>
+                <tbody>@foreach (var x in _membersReport) { <tr><td>@x.MemberNumber</td><td>@x.FullName</td><td>@x.MobileNumber</td><td>@x.Email</td><td>@x.JoinDate.ToNepaliDateString()</td><td>@(x.IsActive ? "Active" : "Inactive")</td><td>@Money(x.TotalContribution)</td><td>@Money(x.TotalLoan)</td><td>@Money(x.PrincipalOutstanding)</td></tr> }</tbody></table>
+            </section>
+        }
+        else if (_report == "contributions")
+        {
+            <ReportTable GroupName="@_group.Name" AsOfDate="@_toDate" Title="Contribution Report" Headers="Date|Member|Amount|Method|Reference|Description|Status">
+                @foreach (var x in _contributions) { <tr><td>@x.TransactionDate.ToNepaliDateString()</td><td>@x.MemberNumber - @x.MemberName</td><td>@Money(x.Amount)</td><td>@x.PaymentMethod</td><td>@x.ReferenceNumber</td><td>@x.Description</td><td>@x.Status</td></tr> }
+            </ReportTable>
+        }
+        else if (_report == "collection-due" || _report == "collection-outstanding")
+        {
+            <ReportTable GroupName="@_group.Name" AsOfDate="@_toDate" Title="@CurrentReportTitle" Headers="Member|Period|Due Date|Due Amount|Paid|Late Fee|Outstanding|Status">
+                @foreach (var x in _collections) { <tr><td>@x.MemberNumber - @x.MemberName</td><td>@x.PeriodStart.ToNepaliDateString() - @x.PeriodEnd.ToNepaliDateString()</td><td>@x.DueDate.ToNepaliDateString()</td><td>@Money(x.DueAmount)</td><td>@Money(x.PaidAmount)</td><td>@Money(x.LateFeeAmount - x.WaivedLateFeeAmount)</td><td>@Money(x.OutstandingAmount)</td><td>@x.Status</td></tr> }
+            </ReportTable>
+        }
+        else if (_report == "loan-register" || _report == "loan-outstanding")
+        {
+            <ReportTable GroupName="@_group.Name" AsOfDate="@_toDate" Title="@CurrentReportTitle" Headers="Loan No|Member|Disbursement|Principal|Rate|Method|Duration|Principal Paid|Interest Paid|Outstanding|Status">
+                @foreach (var x in _loans) { <tr><td>@x.LoanNumber</td><td>@x.MemberNumber - @x.MemberName</td><td>@x.DisbursementDate.ToNepaliDateString()</td><td>@Money(x.PrincipalAmount)</td><td>@x.InterestRate.ToString("N2")%</td><td>@x.InterestMethod</td><td>@x.DurationMonths</td><td>@Money(x.PrincipalPaid)</td><td>@Money(x.InterestPaid)</td><td>@Money(x.OutstandingPrincipal)</td><td>@x.Status</td></tr> }
+            </ReportTable>
+        }
+        else if (_report == "loan-repayments")
+        {
+            <ReportTable GroupName="@_group.Name" AsOfDate="@_toDate" Title="Loan Repayment Report" Headers="Date|Loan|Member|Amount|Principal|Interest|Penalty|Overpayment|Method|Reference|Status">
+                @foreach (var x in _repayments) { <tr><td>@x.TransactionDate.ToNepaliDateString()</td><td>@x.LoanNumber</td><td>@x.MemberNumber - @x.MemberName</td><td>@Money(x.Amount)</td><td>@Money(x.PrincipalAllocated)</td><td>@Money(x.InterestAllocated)</td><td>@Money(x.PenaltyAllocated)</td><td>@Money(x.OverpaymentAmount)</td><td>@x.PaymentMethod</td><td>@x.ReferenceNumber</td><td>@x.Status</td></tr> }
+            </ReportTable>
+        }
+        else if (_report == "loan-installments")
+        {
+            <ReportTable GroupName="@_group.Name" AsOfDate="@_toDate" Title="Loan Installment Schedule" Headers="Loan|Member|Installment|Due Date|Opening Principal|Principal|Interest|Penalty|Total Due|Paid Principal|Paid Interest|Outstanding|Status">
+                @foreach (var x in _installments) { <tr><td>@x.LoanNumber</td><td>@x.MemberNumber - @x.MemberName</td><td>@x.InstallmentNumber</td><td>@x.DueDate.ToNepaliDateString()</td><td>@Money(x.OpeningPrincipal)</td><td>@Money(x.PrincipalDue)</td><td>@Money(x.InterestDue)</td><td>@Money(x.PenaltyDue)</td><td>@Money(x.TotalDue)</td><td>@Money(x.PrincipalPaid)</td><td>@Money(x.InterestPaid)</td><td>@Money(x.OutstandingAmount)</td><td>@x.Status</td></tr> }
+            </ReportTable>
+        }
+        else if (_report == "overdue")
+        {
+            <ReportTable GroupName="@_group.Name" AsOfDate="@_toDate" Title="Overdue Loan Report" Headers="Loan|Member|Installment|Due Date|Days Overdue|Principal|Interest|Penalty|Outstanding">
+                @foreach (var x in _overdue) { <tr><td>@x.LoanNumber</td><td>@x.MemberNumber - @x.MemberName</td><td>@x.InstallmentNumber</td><td>@x.DueDate.ToNepaliDateString()</td><td>@x.DaysOverdue</td><td>@Money(x.PrincipalOutstanding)</td><td>@Money(x.InterestOutstanding)</td><td>@Money(x.PenaltyOutstanding)</td><td>@Money(x.OutstandingAmount)</td></tr> }
+            </ReportTable>
+        }
+        else if (_report == "interest-income")
+        {
+            <ReportTable GroupName="@_group.Name" AsOfDate="@_toDate" Title="Interest Income Report" Headers="Loan|Member|Period|Opening Principal|Rate|Interest Amount|Method|Posted">
+                @foreach (var x in _interest) { <tr><td>@x.LoanNumber</td><td>@x.MemberName</td><td>@x.PeriodStart.ToNepaliDateString() - @x.PeriodEnd.ToNepaliDateString()</td><td>@Money(x.OpeningPrincipal)</td><td>@x.InterestRate.ToString("N2")%</td><td>@Money(x.InterestAmount)</td><td>@x.CalculationMethod</td><td>@(x.IsPosted ? "Yes" : "No")</td></tr> }
+            </ReportTable>
+        }
+        else if (_report == "profit-distribution")
+        {
+            <ReportTable GroupName="@_group.Name" AsOfDate="@_toDate" Title="Profit Distribution Report" Headers="Period|Member|Method|Net Profit|Reserve|Distributable|Distributed|Status">
+                @foreach (var x in _distributions) { <tr><td>@x.PeriodStart.ToNepaliDateString() - @x.PeriodEnd.ToNepaliDateString()</td><td>@x.MemberNumber - @x.MemberName</td><td>@x.DistributionMethod</td><td>@Money(x.NetProfit)</td><td>@Money(x.ReserveAmount)</td><td>@Money(x.DistributableAmount)</td><td>@Money(x.DistributedAmount)</td><td>@x.Status</td></tr> }
+            </ReportTable>
+        }
+        else if (_report == "expenses")
+        {
+            <ReportTable GroupName="@_group.Name" AsOfDate="@_toDate" Title="Expense Report" Headers="Date|Expense No|Category|Amount|Method|Account|Reference|Description|Status">
+                @foreach (var x in _expenses) { <tr><td>@x.ExpenseDate.ToNepaliDateString()</td><td>@x.ExpenseNumber</td><td>@x.ExpenseCategoryName</td><td>@Money(x.Amount)</td><td>@x.PaymentMethod</td><td>@x.FinancialAccountCode</td><td>@x.ReferenceNumber</td><td>@x.Description</td><td>@x.Status</td></tr> }
+            </ReportTable>
+        }
+        else if (_report == "assets")
+        {
+            <ReportTable GroupName="@_group.Name" AsOfDate="@_toDate" Title="Asset Register" Headers="Code|Asset|Category|Acquisition Date|Acquisition Cost|Book Value|Location|Status">
+                @foreach (var x in _assets) { <tr><td>@x.AssetCode</td><td>@x.AssetName</td><td>@x.Category</td><td>@x.AcquisitionDate.ToNepaliDateString()</td><td>@Money(x.AcquisitionCost)</td><td>@Money(x.BookValue)</td><td>@x.Location</td><td>@x.Status</td></tr> }
+            </ReportTable>
+        }
+        else if (_report == "cash-bank")
+        {
+            <ReportTable GroupName="@_group.Name" AsOfDate="@_toDate" Title="Cash / Bank Statement" Headers="Code|Account|Type|Total Debit|Total Credit|Balance">
+                @foreach (var x in _cashBank) { <tr><td>@x.AccountCode</td><td>@x.AccountName</td><td>@x.AccountType</td><td>@Money(x.TotalDebit)</td><td>@Money(x.TotalCredit)</td><td>@Money(x.Balance)</td></tr> }
+            </ReportTable>
+        }
+        else if (_report == "income-expense")
+        {
+            <ReportTable GroupName="@_group.Name" AsOfDate="@_toDate" Title="Income & Expense Statement" Headers="Month|Income|Expense|Profit">
+                @foreach (var x in _incomeExpense) { <tr><td>@x.MonthName</td><td>@Money(x.Income)</td><td>@Money(x.Expense)</td><td>@Money(x.Profit)</td></tr> }
+            </ReportTable>
+        }
+        else if (_report == "balance-sheet" && _balanceSheet is not null)
+        {
+            <section class="setup-card report-sheet">
+                <ReportHeader Title="Balance Sheet" GroupName="@_group.Name" AsOfDate="@_toDate" />
+                <div class="report-summary-grid">
+                    <ReportMetric Label="Total Assets" Value="@Money(_balanceSheet.TotalAssets)" />
+                    <ReportMetric Label="Total Liabilities" Value="@Money(_balanceSheet.TotalLiabilities)" />
+                    <ReportMetric Label="Total Equity" Value="@Money(_balanceSheet.TotalEquity)" />
+                    <ReportMetric Label="Net Profit" Value="@Money(_balanceSheet.NetProfit)" />
+                    <ReportMetric Label="Liabilities + Equity + Profit" Value="@Money(_balanceSheet.TotalLiabilitiesAndEquity)" />
+                </div>
+                <table class="data-table"><thead><tr><th>Type</th><th>Code</th><th>Account</th><th>Balance</th></tr></thead>
+                <tbody>@foreach (var x in _balanceSheet.Lines) { <tr><td>@x.AccountType</td><td>@x.AccountCode</td><td>@x.AccountName</td><td>@Money(x.Balance)</td></tr> }</tbody></table>
+            </section>
+        }
+        else if (_report == "member-statement" && _memberStatement is not null)
+        {
+            <section class="setup-card report-sheet">
+                <ReportHeader Title="@MemberStatementTitle" GroupName="@_group.Name" AsOfDate="@_toDate" />
+                <div class="report-summary-grid">
+                    <ReportMetric Label="Opening Net Movement" Value="@Money(_memberStatement.OpeningNetMovement)" />
+                    <ReportMetric Label="Entries" Value="@_memberStatement.Entries.Count.ToString()" />
+                </div>
+                <table class="data-table"><thead><tr><th>Date</th><th>Transaction</th><th>Type</th><th>Description</th><th>Debit</th><th>Credit</th></tr></thead>
+                <tbody>@foreach (var x in _memberStatement.Entries) { <tr><td>@x.TransactionDate.ToNepaliDateString()</td><td>@x.TransactionNumber</td><td>@x.TransactionType</td><td>@x.Description</td><td>@Money(x.DebitAmount)</td><td>@Money(x.CreditAmount)</td></tr> }</tbody></table>
+            </section>
+        }
+        else if (_report == "group-ledger" || _report == "member-ledger" || _report == "trial-balance")
+        {
+            <section class="setup-card report-sheet">
+                <ReportHeader Title="Ledger / Trial Balance" />
+                <p class="muted">Use Ledger & Financial Views for Group Ledger, Member Ledger and Trial Balance. Those views are already implemented in Phase 18.</p>
+                <a class="primary-button" href="/transactions">Open Ledger & Financial Views</a>
+            </section>
+        }
+    }
+</div>
+
+@code {
+    private GroupModel? _group;
+    private List<MemberModel> _members = [];
+    private bool _loading = true;
+    private bool _reportLoading;
+    private string? _error;
+    private string _report = "summary";
+    private DateTime _fromDate = new(DateTime.Today.Year, 1, 1);
+    private DateTime _toDate = DateTime.Today;
+    private long _memberId;
+    private bool _includeInactiveAssets;
+
+    private ReportSummaryModel? _summary;
+    private IReadOnlyList<MemberReportModel> _membersReport = [];
+    private IReadOnlyList<ContributionReportModel> _contributions = [];
+    private IReadOnlyList<CollectionDueReportModel> _collections = [];
+    private IReadOnlyList<LoanRegisterReportModel> _loans = [];
+    private IReadOnlyList<LoanRepaymentReportModel> _repayments = [];
+    private IReadOnlyList<LoanInstallmentReportModel> _installments = [];
+    private IReadOnlyList<OverdueReportModel> _overdue = [];
+    private IReadOnlyList<InterestIncomeReportModel> _interest = [];
+    private IReadOnlyList<ProfitDistributionReportModel> _distributions = [];
+    private IReadOnlyList<ExpenseReportModel> _expenses = [];
+    private IReadOnlyList<AssetReportModel> _assets = [];
+    private IReadOnlyList<CashBankReportModel> _cashBank = [];
+    private IReadOnlyList<IncomeExpenseReportModel> _incomeExpense = [];
+    private BalanceSheetModel? _balanceSheet;
+    private MemberStatementModel? _memberStatement;
+
+    private static readonly IReadOnlyDictionary<string, string> ReportOptions = new Dictionary<string, string>
+    {
+        ["summary"] = "Group Financial Summary",
+        ["members"] = "Member List",
+        ["contributions"] = "Contribution Report",
+        ["collection-due"] = "Collection Due Report",
+        ["collection-outstanding"] = "Collection Outstanding Report",
+        ["loan-register"] = "Loan Register",
+        ["loan-outstanding"] = "Loan Outstanding Report",
+        ["loan-repayments"] = "Loan Repayment Report",
+        ["loan-installments"] = "Loan Installment Schedule",
+        ["overdue"] = "Overdue Loan Report",
+        ["interest-income"] = "Interest Income Report",
+        ["profit-distribution"] = "Profit Distribution Report",
+        ["expenses"] = "Expense Report",
+        ["assets"] = "Asset Register",
+        ["cash-bank"] = "Cash / Bank Statement",
+        ["group-ledger"] = "Group Ledger (Phase 18)",
+        ["member-ledger"] = "Member Ledger (Phase 18)",
+        ["trial-balance"] = "Trial Balance (Phase 18)",
+        ["income-expense"] = "Income & Expense Statement",
+        ["balance-sheet"] = "Balance Sheet",
+        ["member-statement"] = "Member Statement"
+    };
+
+    private string CurrentReportTitle => ReportOptions.TryGetValue(_report, out var title) ? title : "Report";
+    private string MemberStatementTitle => _memberStatement is null ? "Member Statement" : $"Member Statement - {_memberStatement.MemberName}";
+
+    private bool NeedsMemberFilter => _report is "contributions" or "loan-repayments" or "member-statement";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var groups = await GroupApi.GetGroupsAsync();
+            if (!groups.Success || groups.Groups is null || groups.Groups.Count == 0)
+            {
+                _error = groups.Error ?? "Unable to load the active group.";
+                return;
+            }
+            _group = groups.Groups[0];
+            var members = await MemberApi.GetMembersAsync(_group.Id, true);
+            if (members.Success && members.Members is not null) _members = members.Members.ToList();
+            await LoadReportAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _loading = false; }
+    }
+
+    private async Task LoadReportAsync()
+    {
+        if (_group is null) return;
+        _reportLoading = true;
+        _error = null;
+        try
+        {
+            var g = _group.Id;
+            switch (_report)
+            {
+                case "summary": _summary = (await ReportsApi.GetSummaryAsync(g, _toDate)).Data; break;
+                case "members": _membersReport = (await ReportsApi.GetMembersAsync(g, _toDate)).Data ?? []; break;
+                case "contributions": _contributions = (await ReportsApi.GetContributionsAsync(g, _fromDate, _toDate, _memberId > 0 ? _memberId : null)).Data ?? []; break;
+                case "collection-due": _collections = (await ReportsApi.GetCollectionDueAsync(g, _fromDate, _toDate)).Data ?? []; break;
+                case "collection-outstanding": _collections = (await ReportsApi.GetCollectionOutstandingAsync(g, _toDate)).Data ?? []; break;
+                case "loan-register": _loans = (await ReportsApi.GetLoanRegisterAsync(g, _toDate)).Data ?? []; break;
+                case "loan-outstanding": _loans = (await ReportsApi.GetLoanOutstandingAsync(g, _toDate)).Data ?? []; break;
+                case "loan-repayments": _repayments = (await ReportsApi.GetLoanRepaymentsAsync(g, _fromDate, _toDate, _memberId > 0 ? _memberId : null, null)).Data ?? []; break;
+                case "loan-installments": _installments = (await ReportsApi.GetLoanInstallmentsAsync(g, _fromDate, _toDate, null)).Data ?? []; break;
+                case "overdue": _overdue = (await ReportsApi.GetOverdueAsync(g, _toDate)).Data ?? []; break;
+                case "interest-income": _interest = (await ReportsApi.GetInterestIncomeAsync(g, _fromDate, _toDate, null)).Data ?? []; break;
+                case "profit-distribution": _distributions = (await ReportsApi.GetProfitDistributionAsync(g, _fromDate, _toDate)).Data ?? []; break;
+                case "expenses": _expenses = (await ReportsApi.GetExpensesAsync(g, _fromDate, _toDate, null)).Data ?? []; break;
+                case "assets": _assets = (await ReportsApi.GetAssetsAsync(g, _toDate, _includeInactiveAssets)).Data ?? []; break;
+                case "cash-bank": _cashBank = (await ReportsApi.GetCashBankAsync(g, _toDate)).Data ?? []; break;
+                case "income-expense": _incomeExpense = (await ReportsApi.GetIncomeExpenseAsync(g, _fromDate, _toDate)).Data ?? []; break;
+                case "balance-sheet": _balanceSheet = (await ReportsApi.GetBalanceSheetAsync(g, _toDate)).Data; break;
+                case "member-statement":
+                    if (_memberId <= 0) { _error = "Select a member before running the member statement."; return; }
+                    _memberStatement = (await ReportsApi.GetMemberStatementAsync(g, _memberId, _fromDate, _toDate)).Data;
+                    break;
+            }
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _reportLoading = false; }
+    }
+
+    private string Money(decimal value) => $"{_group?.CurrencyCode ?? "NPR"} {value:N2}";
+}

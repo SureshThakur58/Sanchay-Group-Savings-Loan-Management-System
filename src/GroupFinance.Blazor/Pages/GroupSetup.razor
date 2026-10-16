@@ -1,0 +1,183 @@
+@page "/group-setup"
+@attribute [Authorize]
+@using System.Security.Claims
+@using GroupFinance.Blazor.Services
+@inject GroupApiClient Groups
+@inject AuthenticationStateProvider AuthenticationState
+
+<PageTitle>Group Setup</PageTitle>
+
+<h1>Group Setup</h1>
+<p class="page-description">Configure the single group and its financial rules.</p>
+
+@if (_loading)
+{
+    <div class="status-card"><strong>Loading...</strong><span>Checking the configured group.</span></div>
+}
+else if (!string.IsNullOrWhiteSpace(_error))
+{
+    <div class="alert error">@_error</div>
+}
+else if (_group is null)
+{
+    <div class="setup-grid">
+        <section class="setup-card">
+            <h2>Create Group</h2>
+            @if (!_isSuperAdministrator)
+            {
+                <div class="alert warning">Only the Super Administrator can create the initial group.</div>
+            }
+            else
+            {
+                <p class="muted">This system permits one group only. Creating it also creates its group settings.</p>
+                <EditForm Model="_groupForm" OnValidSubmit="CreateGroupAsync">
+                    <DataAnnotationsValidator />
+                    <div class="form-grid">
+                        <div class="form-field"><label>Group Code</label><InputText @bind-Value="_groupForm.Code" /></div>
+                        <div class="form-field"><label>Group Name</label><InputText @bind-Value="_groupForm.Name" /></div>
+                        <div class="form-field full"><label>Description</label><InputTextArea @bind-Value="_groupForm.Description" /></div>
+                        <div class="form-field"><label>Formation Date</label><NepaliDateInput @bind-Value="_groupForm.FormationDate" /></div>
+                        <div class="form-field"><label>Registration Number</label><InputText @bind-Value="_groupForm.RegistrationNumber" /></div>
+                        <div class="form-field"><label>Currency Code</label><InputText @bind-Value="_groupForm.CurrencyCode" /></div>
+                    </div>
+                    <GroupSettingsEditor Model="_settingsForm" />
+                    <button class="primary-button" type="submit" disabled="@_saving">@(_saving ? "Creating..." : "Create Group")</button>
+                </EditForm>
+            }
+        </section>
+    </div>
+}
+else
+{
+    <div class="setup-grid">
+        <section class="setup-card">
+            <div class="section-heading"><div><h2>Group Information</h2><span class="muted">Group ID: @_group.Id</span></div><span class="badge @(_group.IsActive ? "active" : "inactive")">@(_group.IsActive ? "Active" : "Inactive")</span></div>
+            <EditForm Model="_groupForm" OnValidSubmit="SaveGroupAsync">
+                <DataAnnotationsValidator />
+                <div class="form-grid">
+                    <div class="form-field"><label>Group Code</label><InputText @bind-Value="_groupForm.Code" disabled="@(!_canManage)" /></div>
+                    <div class="form-field"><label>Group Name</label><InputText @bind-Value="_groupForm.Name" disabled="@(!_canManage)" /></div>
+                    <div class="form-field full"><label>Description</label><InputTextArea @bind-Value="_groupForm.Description" disabled="@(!_canManage)" /></div>
+                    <div class="form-field"><label>Formation Date</label><NepaliDateInput @bind-Value="_groupForm.FormationDate" disabled="@(!_canManage)" /></div>
+                    <div class="form-field"><label>Registration Number</label><InputText @bind-Value="_groupForm.RegistrationNumber" disabled="@(!_canManage)" /></div>
+                    <div class="form-field"><label>Currency Code</label><InputText @bind-Value="_groupForm.CurrencyCode" disabled="@(!_canManage)" /></div>
+                    <div class="form-field checkbox-field"><label><InputCheckbox @bind-Value="_groupForm.IsActive" disabled="@(!_canManage)" /> Active</label></div>
+                </div>
+                @if (_canManage)
+                {
+                    <button class="primary-button" type="submit" disabled="@_saving">@(_saving ? "Saving..." : "Save Group")</button>
+                }
+            </EditForm>
+        </section>
+
+        <section class="setup-card">
+            <div class="section-heading"><div><h2>Group Financial Settings</h2><span class="muted">Central defaults used by later contribution and loan phases.</span></div></div>
+            @if (_settingsForm is not null)
+            {
+                <GroupSettingsEditor Model="_settingsForm" ReadOnly="@(!_canManage)" />
+                @if (_canManage)
+                {
+                    <button class="primary-button" @onclick="SaveSettingsAsync" disabled="@_saving">@(_saving ? "Saving..." : "Save Settings")</button>
+                }
+            }
+        </section>
+    </div>
+}
+
+@if (!string.IsNullOrWhiteSpace(_message))
+{
+    <div class="alert success">@_message</div>
+}
+
+@code {
+    private GroupModel? _group;
+    private GroupForm _groupForm = new();
+    private GroupSettingsModel _settingsForm = DefaultSettings();
+    private bool _loading = true;
+    private bool _saving;
+    private bool _canManage;
+    private bool _isSuperAdministrator;
+    private string? _error;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthenticationState.GetAuthenticationStateAsync();
+        _canManage = state.User.HasClaim("permission", "Groups.Manage");
+        _isSuperAdministrator = state.User.IsInRole("SuperAdministrator");
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        var result = await Groups.GetGroupsAsync();
+        if (!result.Success)
+        {
+            _error = result.Error;
+        }
+        else
+        {
+            _group = result.Groups?.SingleOrDefault();
+            if (_group is not null)
+            {
+                _groupForm = new GroupForm(_group);
+                _settingsForm = _group.Settings is null ? DefaultSettings() : new GroupSettingsModel(
+                    _group.Settings.DefaultContributionAmount, _group.Settings.ContributionFrequency, _group.Settings.DefaultLoanInterestRate,
+                    _group.Settings.LoanInterestMethod, _group.Settings.DefaultLoanDuration, _group.Settings.LoanDurationUnit,
+                    _group.Settings.LoanInstallmentFrequency, _group.Settings.ContributionLateFeeRate, _group.Settings.ProfitReserveRate,
+                    _group.Settings.ProfitDistributionMethod, _group.Settings.LoanContributionMultiplier, _group.Settings.MinimumMembershipMonthsForLoan,
+                    _group.Settings.MaximumActiveLoansPerMember, _group.Settings.RequiredGuarantors, _group.Settings.MonetaryPrecision,
+                    _group.Settings.DateFormat, _group.Settings.AllowBackdatedTransactions, _group.Settings.AllowFutureFinancialPosting);
+            }
+        }
+        _loading = false;
+    }
+
+    private async Task CreateGroupAsync()
+    {
+        _saving = true; _error = null; _message = null;
+        var result = await Groups.CreateAsync(new CreateGroupModel(_groupForm.Code, _groupForm.Name, _groupForm.Description, _groupForm.FormationDate,
+            _groupForm.RegistrationNumber, _groupForm.CurrencyCode, _settingsForm));
+        if (!result.Success) _error = result.Error;
+        else { _group = result.Group; _groupForm = new GroupForm(_group!); _message = "Group created successfully."; }
+        _saving = false;
+    }
+
+    private async Task SaveGroupAsync()
+    {
+        if (_group is null) return;
+        _saving = true; _error = null; _message = null;
+        var result = await Groups.UpdateAsync(_group.Id, new UpdateGroupModel(_groupForm.Code, _groupForm.Name, _groupForm.Description, _groupForm.FormationDate,
+            _groupForm.RegistrationNumber, _groupForm.CurrencyCode, _groupForm.IsActive));
+        if (!result.Success) _error = result.Error;
+        else { _group = result.Group; _message = "Group information saved."; }
+        _saving = false;
+    }
+
+    private async Task SaveSettingsAsync()
+    {
+        if (_group is null) return;
+        _saving = true; _error = null; _message = null;
+        var result = await Groups.UpdateSettingsAsync(_group.Id, _settingsForm);
+        if (!result.Success) _error = result.Error;
+        else { _message = "Group financial settings saved."; await LoadAsync(); }
+        _saving = false;
+    }
+
+    private static GroupSettingsModel DefaultSettings() => new(0m, "Quarterly", 12m, "ReducingBalance", 12, "Months", "Monthly", 1m, 10m, "ContributionBased", 3m, 6, 1, 2, 2, "DD/MM/YYYY", true, false);
+
+    private sealed class GroupForm
+    {
+        public string Code { get; set; } = "GRP-001";
+        public string Name { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public DateTime FormationDate { get; set; } = DateTime.Today;
+        public string? RegistrationNumber { get; set; }
+        public string CurrencyCode { get; set; } = "NPR";
+        public bool IsActive { get; set; } = true;
+        public GroupForm() { }
+        public GroupForm(GroupModel group) { Code = group.Code; Name = group.Name; Description = group.Description; FormationDate = group.FormationDate; RegistrationNumber = group.RegistrationNumber; CurrencyCode = group.CurrencyCode; IsActive = group.IsActive; }
+    }
+}

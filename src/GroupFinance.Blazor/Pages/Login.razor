@@ -1,0 +1,99 @@
+@page "/login"
+@attribute [AllowAnonymous]
+@layout EmptyLayout
+@inject AuthApiClient Auth
+@inject NavigationManager Navigation
+
+<PageTitle>Sign in · Sanchay</PageTitle>
+
+<div class="login-page">
+    <section class="login-brand-panel" aria-hidden="true">
+        <div class="login-brand">
+            <img src="/img/logo-icon.svg" alt="" />
+            <span>Sanchay</span>
+        </div>
+        <div class="login-brand-copy">
+            <span class="eyebrow">GROUP SAVINGS &amp; LOAN MANAGEMENT</span>
+            <h1>Every contribution tracked.<br />Every loan accounted for.</h1>
+            <p>One trusted workspace for members, contributions, loans, fund movements and financial reporting.</p>
+        </div>
+        <div class="login-brand-footer">Secure financial records · NPR · Nepal</div>
+    </section>
+
+    <section class="login-form-panel">
+        <div class="login-card">
+            <div class="login-mobile-brand"><img src="/img/logo-icon.svg" alt="Sanchay" /><strong>Sanchay</strong></div>
+            <span class="eyebrow">WELCOME BACK</span>
+            <h1>Sign in</h1>
+            <p class="login-subtitle">Enter your credentials to access your workspace.</p>
+
+            @if (!string.IsNullOrWhiteSpace(error)) { <div class="auth-alert auth-error" role="alert">@error</div> }
+            @if (!string.IsNullOrWhiteSpace(_changePasswordMessage)) { <div class="auth-alert auth-success" role="status">@_changePasswordMessage</div> }
+
+            <EditForm Model="model" OnValidSubmit="LoginAsync">
+                <DataAnnotationsValidator />
+                <div class="form-field"><label for="login-user">Username</label><InputText id="login-user" @bind-Value="model.UserName" autocomplete="username" disabled="@busy" placeholder="Enter username" /></div>
+                <div class="form-field"><label for="login-password">Password</label><InputText id="login-password" @bind-Value="model.Password" type="password" autocomplete="current-password" disabled="@busy" placeholder="Enter password" /></div>
+                <button class="auth-primary-button" type="submit" disabled="@busy">@(busy ? "Signing in…" : "Sign in")</button>
+                <button type="button" class="auth-secondary-button" @onclick="ToggleChangePassword" disabled="@busy">Change password</button>
+            </EditForm>
+
+            @if (_showChangePassword)
+            {
+                <div class="change-password-panel">
+                    <div class="change-password-heading"><div><h2>Change password</h2><p>Verify your current password before setting a new one.</p></div><button type="button" class="icon-close" @onclick="ToggleChangePassword" aria-label="Close">×</button></div>
+                    <EditForm Model="_changePassword" OnValidSubmit="ChangePasswordAsync">
+                        <DataAnnotationsValidator />
+                        <div class="form-field"><label>Username</label><InputText @bind-Value="_changePassword.UserName" autocomplete="username" /></div>
+                        <div class="form-field"><label>Current password</label><InputText @bind-Value="_changePassword.CurrentPassword" type="password" autocomplete="current-password" /></div>
+                        <div class="form-field"><label>New password</label><InputText @bind-Value="_changePassword.NewPassword" type="password" autocomplete="new-password" /></div>
+                        <div class="form-field"><label>Confirm new password</label><InputText @bind-Value="_changePassword.ConfirmPassword" type="password" autocomplete="new-password" /></div>
+                        @if (!string.IsNullOrWhiteSpace(_changePasswordError)) { <div class="auth-alert auth-error">@_changePasswordError</div> }
+                        <div class="change-password-actions"><button class="auth-primary-button" type="submit" disabled="@_changingPassword">@(_changingPassword ? "Changing…" : "Change password")</button><button class="auth-secondary-button" type="button" @onclick="ToggleChangePassword" disabled="@_changingPassword">Cancel</button></div>
+                    </EditForm>
+                </div>
+            }
+            <div class="login-foot"><span>Access is provisioned by your administrator.</span><span>Session expires automatically after the configured JWT timeout.</span></div>
+        </div>
+    </section>
+</div>
+
+@code {
+    private readonly LoginForm model = new();
+    private readonly ChangePasswordForm _changePassword = new();
+    private bool busy, _showChangePassword, _changingPassword;
+    private string? error, _changePasswordError, _changePasswordMessage;
+
+    private async Task LoginAsync()
+    {
+        busy = true; error = null;
+        try
+        {
+            var result = await Auth.LoginAsync(model.UserName, model.Password);
+            if (result.Success) Navigation.NavigateTo("/", replace: true); else error = result.Error;
+        }
+        catch { error = "We couldn't reach the server. Please try again."; }
+        finally { busy = false; }
+    }
+
+    private void ToggleChangePassword()
+    {
+        _showChangePassword = !_showChangePassword; _changePasswordError = null; _changePasswordMessage = null;
+        if (_showChangePassword) { _changePassword.UserName = model.UserName; _changePassword.CurrentPassword = string.Empty; _changePassword.NewPassword = string.Empty; _changePassword.ConfirmPassword = string.Empty; }
+    }
+
+    private async Task ChangePasswordAsync()
+    {
+        _changingPassword = true; _changePasswordError = null; _changePasswordMessage = null;
+        if (!string.Equals(_changePassword.NewPassword, _changePassword.ConfirmPassword, StringComparison.Ordinal)) { _changePasswordError = "New password and confirmation do not match."; _changingPassword = false; return; }
+        var loginResult = await Auth.LoginAsync(_changePassword.UserName, _changePassword.CurrentPassword);
+        if (!loginResult.Success) { _changePasswordError = loginResult.Error ?? "Current password is incorrect."; _changingPassword = false; return; }
+        var result = await Auth.ChangePasswordAsync(_changePassword.CurrentPassword, _changePassword.NewPassword);
+        Auth.Logout();
+        if (!result.Success) { _changePasswordError = result.Error ?? "Password change failed."; _changingPassword = false; return; }
+        _changePasswordMessage = "Password changed successfully. Please sign in with your new password."; model.UserName = _changePassword.UserName; model.Password = string.Empty; _showChangePassword = false; _changingPassword = false;
+    }
+
+    private sealed class LoginForm { [System.ComponentModel.DataAnnotations.Required] public string UserName { get; set; } = string.Empty; [System.ComponentModel.DataAnnotations.Required] public string Password { get; set; } = string.Empty; }
+    private sealed class ChangePasswordForm { [System.ComponentModel.DataAnnotations.Required] public string UserName { get; set; } = string.Empty; [System.ComponentModel.DataAnnotations.Required] public string CurrentPassword { get; set; } = string.Empty; [System.ComponentModel.DataAnnotations.Required, System.ComponentModel.DataAnnotations.MinLength(8)] public string NewPassword { get; set; } = string.Empty; [System.ComponentModel.DataAnnotations.Required] public string ConfirmPassword { get; set; } = string.Empty; }
+}

@@ -1,0 +1,28 @@
+<CascadingAuthenticationState>
+    <Router AppAssembly="@typeof(Program).Assembly">
+        <Found Context="routeData">
+            <AuthorizeRouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)">
+                <NotAuthorized Context="routeAuthState">
+                    <AuthorizeView>
+                        <Authorized Context="authorizedState">
+                            <LayoutView Layout="@typeof(MainLayout)">
+                                <AccessDenied />
+                            </LayoutView>
+                        </Authorized>
+                        <NotAuthorized Context="anonymousState">
+                            <RedirectToLogin />
+                        </NotAuthorized>
+                    </AuthorizeView>
+                </NotAuthorized>
+            </AuthorizeRouteView>
+            <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+        </Found>
+        <NotFound>
+            <LayoutView Layout="@typeof(MainLayout)">
+                <div class="not-found-page">
+                    <div class="not-found-card"><span class="eyebrow">404</span><h1>Page not found</h1><p>The page you're looking for doesn't exist.</p><a class="primary-button" href="/">Return to Dashboard</a></div>
+                </div>
+            </LayoutView>
+        </NotFound>
+    </Router>
+</CascadingAuthenticationState>

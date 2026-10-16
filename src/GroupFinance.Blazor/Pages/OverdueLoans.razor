@@ -1,0 +1,89 @@
+@attribute [Authorize]
+@page "/overdue-loans"
+@inject GroupApiClient GroupApi
+@inject OverdueLoanApiClient OverdueApi
+
+<PageTitle>Overdue Loans</PageTitle>
+
+<div class="page-shell">
+    <div class="page-heading"><div><h1>Overdue Loans</h1><p class="muted">Identify overdue installments, days overdue, and outstanding principal, interest, and penalty.</p></div></div>
+    @if (!string.IsNullOrWhiteSpace(_error)) { <div class="alert error">@_error</div> }
+    @if (!string.IsNullOrWhiteSpace(_message)) { <div class="alert success">@_message</div> }
+
+    @if (_loading) { <p>Loading...</p> }
+    else if (_group is null) { <section class="setup-card"><p>No active group is configured.</p></section> }
+    else
+    {
+        <section class="card">
+            <div class="section-heading"><div><h2>Overdue As Of</h2><p class="muted">Evaluation is performed against this date. The API persists overdue status and the configured late fee when an installment becomes overdue.</p></div></div>
+            <div class="form-field"><label>As-of Date</label><NepaliDateInput @bind-Value="_asOfDate" /></div>
+            <button class="primary-button" disabled="@_evaluating" @onclick="EvaluateAsync">@(_evaluating ? "Evaluating..." : "Evaluate Overdue Loans")</button>
+        </section>
+
+        @if (_summary is not null)
+        {
+            <section class="form-grid">
+                <div class="summary-card"><span>Overdue Loans</span><strong>@_summary.OverdueLoanCount</strong></div>
+                <div class="summary-card"><span>Overdue Installments</span><strong>@_summary.OverdueInstallmentCount</strong></div>
+                <div class="summary-card"><span>Outstanding Principal</span><strong>NPR @_summary.OutstandingPrincipal.ToString("N2")</strong></div>
+                <div class="summary-card"><span>Outstanding Interest</span><strong>NPR @_summary.OutstandingInterest.ToString("N2")</strong></div>
+                <div class="summary-card"><span>Outstanding Penalty</span><strong>NPR @_summary.OutstandingPenalty.ToString("N2")</strong></div>
+                <div class="summary-card"><span>Total Overdue Amount</span><strong>NPR @_summary.TotalOverdueAmount.ToString("N2")</strong></div>
+            </section>
+        }
+
+        <section class="card">
+            <div class="section-heading"><div><h2>Overdue Loans</h2><p class="muted">Only Active loans with unpaid installments past their due date are shown.</p></div><button class="secondary-button" @onclick="LoadAsync">Refresh</button></div>
+            @if (_loans.Count == 0) { <p class="muted">No overdue loans for the selected date.</p> }
+            else
+            {
+                <div class="table-wrapper"><table class="data-table"><thead><tr><th>Loan</th><th>Member</th><th>Overdue Installments</th><th>Days Overdue</th><th>Principal</th><th>Interest</th><th>Penalty</th><th>Total</th><th>Status</th></tr></thead><tbody>
+                @foreach (var loan in _loans)
+                {
+                    <tr><td>@loan.LoanNumber</td><td>@loan.MemberNumber - @loan.MemberName</td><td>@loan.OverdueInstallmentCount</td><td>@loan.MaximumDaysOverdue</td><td>NPR @loan.OutstandingPrincipal.ToString("N2")</td><td>NPR @loan.OutstandingInterest.ToString("N2")</td><td>NPR @loan.OutstandingPenalty.ToString("N2")</td><td>NPR @loan.TotalOverdueAmount.ToString("N2")</td><td><span class="badge">@loan.Status</span></td></tr>
+                }
+                </tbody></table></div>
+            }
+        </section>
+    }
+</div>
+
+@code {
+    private GroupModel? _group;
+    private List<OverdueLoanSummaryModel> _loans = [];
+    private OverdueEvaluationModel? _summary;
+    private DateTime _asOfDate = DateTime.Today;
+    private bool _loading = true;
+    private bool _evaluating;
+    private string? _error;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true; _error = null;
+        var groups = await GroupApi.GetGroupsAsync();
+        if (!groups.Success || groups.Groups is null || groups.Groups.Count == 0) { _error = groups.Error ?? "No active group is configured."; _loading = false; return; }
+        _group = groups.Groups[0];
+        var result = await OverdueApi.GetOverdueLoansAsync(_group.Id, _asOfDate);
+        if (!result.Success) _error = result.Error;
+        _loans = result.Data?.ToList() ?? [];
+        _loading = false;
+        var eval = await OverdueApi.EvaluateAsync(_group.Id, _asOfDate);
+        if (eval.Success) _summary = eval.Data;
+    }
+
+    private async Task EvaluateAsync()
+    {
+        if (_group is null) return;
+        _evaluating = true; _error = _message = null;
+        var result = await OverdueApi.EvaluateAsync(_group.Id, _asOfDate);
+        if (!result.Success || result.Data is null) { _error = result.Error; _evaluating = false; return; }
+        _summary = result.Data;
+        var list = await OverdueApi.GetOverdueLoansAsync(_group.Id, _asOfDate);
+        if (!list.Success) _error = list.Error; else _loans = list.Data?.ToList() ?? [];
+        _message = $"Overdue evaluation completed for {_asOfDate:dd/MM/yyyy}. Found {_summary.OverdueLoanCount} overdue loan(s) and {_summary.OverdueInstallmentCount} overdue installment(s).";
+        _evaluating = false;
+    }
+}

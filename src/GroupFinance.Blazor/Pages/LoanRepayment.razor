@@ -1,0 +1,122 @@
+@attribute [Authorize]
+@page "/loan-repayment"
+@inject GroupApiClient GroupApi
+@inject LoanDisbursementApiClient LoanApi
+@inject GroupFundApiClient FundApi
+@inject LoanRepaymentApiClient RepaymentApi
+
+<PageTitle>Loan Repayment</PageTitle>
+
+<div class="page-shell">
+    <div class="page-heading"><div><h1>Loan Repayment</h1><p class="muted">Receive full or partial loan repayments, allocate penalty → interest → principal, and post the balanced repayment journal.</p></div></div>
+    @if (!string.IsNullOrWhiteSpace(_error)) { <div class="alert error">@_error</div> }
+    @if (!string.IsNullOrWhiteSpace(_message)) { <div class="alert success">@_message</div> }
+
+    @if (_loading) { <p>Loading...</p> }
+    else if (_group is null) { <section class="setup-card"><p>No active group is configured.</p></section> }
+    else
+    {
+        <section class="card">
+            <div class="section-heading"><div><h2>Active Loans</h2><p class="muted">Select an active loan to record a repayment.</p></div><button class="secondary-button" @onclick="LoadAsync">Refresh</button></div>
+            @if (_loans.Count == 0) { <p class="muted">No active loans are available.</p> }
+            else
+            {
+                <div class="table-wrapper"><table class="data-table"><thead><tr><th>Loan</th><th>Member</th><th>Principal</th><th>EMI</th><th>Principal Outstanding</th><th>Interest Paid</th><th>Penalty Paid</th><th>Status</th><th></th></tr></thead><tbody>
+                @foreach (var loan in _loans.Where(x => x.Status == "Active"))
+                {
+                    <tr><td>@loan.LoanNumber</td><td>@loan.MemberNumber - @loan.MemberName</td><td>NPR @loan.PrincipalAmount.ToString("N2")</td><td>NPR @loan.InstallmentAmount.ToString("N2")</td><td>NPR @loan.OutstandingPrincipal.ToString("N2")</td><td>NPR @loan.InterestPaid.ToString("N2")</td><td>NPR @loan.PenaltyPaid.ToString("N2")</td><td><span class="badge">@loan.Status</span></td><td><button class="primary-button" @onclick="() => SelectLoanAsync(loan)">Repay</button></td></tr>
+                }
+                </tbody></table></div>
+            }
+        </section>
+
+        @if (_selectedLoan is not null)
+        {
+            <section class="form-grid">
+                <section class="setup-card">
+                    <div class="section-heading"><div><h2>Record Repayment</h2><p class="muted">@_selectedLoan.LoanNumber — @_selectedLoan.MemberNumber - @_selectedLoan.MemberName</p></div><button class="secondary-button" @onclick="ClearSelection">Cancel</button></div>
+                    <div class="summary-card"><span>Outstanding Principal</span><strong>NPR @_selectedLoan.OutstandingPrincipal.ToString("N2")</strong></div>
+                    <div class="form-field"><label>Receipt Account</label><InputSelect @bind-Value="_form.FinancialAccountId"><option value="0">Select Cash / Bank account</option>@foreach (var account in _accounts.Where(x => x.IsActive && IsFundAccount(x.AccountType))) { <option value="@account.Id">@account.AccountCode - @account.AccountName (NPR @account.Balance.ToString("N2"))</option> }</InputSelect></div>
+                    <div class="form-field"><label>Transaction Date</label><NepaliDateInput @bind-Value="_form.TransactionDate" /></div>
+                    <div class="form-field"><label>Amount</label><InputNumber @bind-Value="_form.Amount" /></div>
+                    <div class="form-field"><label>Payment Method</label><InputSelect @bind-Value="_form.PaymentMethod"><option value="Cash">Cash</option><option value="Bank">Bank</option><option value="Online Transfer">Online Transfer</option><option value="Other">Other</option></InputSelect></div>
+                    <div class="form-field"><label>Reference Number</label><InputText @bind-Value="_form.ReferenceNumber" /></div>
+                    <div class="form-field"><label>Description</label><InputText @bind-Value="_form.Description" /></div>
+                    <button class="primary-button" disabled="@_saving" @onclick="RepayAsync">@(_saving ? "Posting..." : "Post Repayment")</button>
+                </section>
+
+                <section class="card">
+                    <h2>Installment Schedule</h2>
+                    @if (_schedule is null) { <p>Loading schedule...</p> }
+                    else { <div class="table-wrapper"><table class="data-table"><thead><tr><th>#</th><th>Due</th><th>Principal</th><th>Interest</th><th>Penalty</th><th>Paid Principal</th><th>Paid Interest</th><th>Paid Penalty</th><th>Outstanding</th><th>Status</th></tr></thead><tbody>@foreach (var line in _schedule) { <tr><td>@line.InstallmentNumber</td><td>@line.DueDate.ToNepaliDateString()</td><td>NPR @line.PrincipalDue.ToString("N2")</td><td>NPR @line.InterestDue.ToString("N2")</td><td>NPR @line.PenaltyDue.ToString("N2")</td><td>NPR @line.PrincipalPaid.ToString("N2")</td><td>NPR @line.InterestPaid.ToString("N2")</td><td>NPR @line.PenaltyPaid.ToString("N2")</td><td>NPR @line.OutstandingAmount.ToString("N2")</td><td>@line.Status</td></tr> }</tbody></table></div> }
+                </section>
+            </section>
+
+            <section class="card">
+                <div class="section-heading"><div><h2>Payment History</h2><p class="muted">Posted repayments for this loan.</p></div></div>
+                @if (_payments.Count == 0) { <p class="muted">No repayments recorded yet.</p> }
+                else { <div class="table-wrapper"><table class="data-table"><thead><tr><th>Date</th><th>Amount</th><th>Penalty</th><th>Interest</th><th>Principal</th><th>Overpayment</th><th>Method</th><th>Reference</th><th>Journal</th></tr></thead><tbody>@foreach (var payment in _payments) { <tr><td>@payment.TransactionDate.ToNepaliDateString()</td><td>NPR @payment.Amount.ToString("N2")</td><td>NPR @payment.PenaltyAllocated.ToString("N2")</td><td>NPR @payment.InterestAllocated.ToString("N2")</td><td>NPR @payment.PrincipalAllocated.ToString("N2")</td><td>NPR @payment.OverpaymentAmount.ToString("N2")</td><td>@payment.PaymentMethod</td><td>@payment.ReferenceNumber</td><td>@payment.FinancialTransactionId</td></tr> }</tbody></table></div> }
+            </section>
+        }
+    }
+</div>
+
+@code {
+    private GroupModel? _group;
+    private List<LoanSummaryModel> _loans = [];
+    private List<GroupFundAccountModel> _accounts = [];
+    private List<LoanScheduleModel>? _schedule;
+    private List<LoanPaymentSummaryModel> _payments = [];
+    private LoanSummaryModel? _selectedLoan;
+    private LoanRepaymentRequestModel _form = new() { TransactionDate = DateTime.Today, PaymentMethod = "Cash" };
+    private bool _loading = true;
+    private bool _saving;
+    private string? _error;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true; _error = null;
+        var groups = await GroupApi.GetGroupsAsync();
+        if (!groups.Success || groups.Groups is null || groups.Groups.Count == 0) { _error = groups.Error ?? "No active group is configured."; _loading = false; return; }
+        _group = groups.Groups[0];
+        var loans = await LoanApi.GetLoansAsync(_group.Id, "Active");
+        if (!loans.Success) { _error = loans.Error; _loading = false; return; }
+        _loans = loans.Data?.ToList() ?? [];
+        var accounts = await FundApi.GetAccountsAsync(_group.Id);
+        if (!accounts.Success) { _error = accounts.Error; _loading = false; return; }
+        _accounts = accounts.Data?.ToList() ?? [];
+        _loading = false;
+    }
+
+    private async Task SelectLoanAsync(LoanSummaryModel loan)
+    {
+        _selectedLoan = loan; _error = _message = null;
+        _form = new LoanRepaymentRequestModel { TransactionDate = DateTime.Today, PaymentMethod = "Cash", Description = $"Loan repayment {loan.LoanNumber}" };
+        var schedule = await LoanApi.GetScheduleAsync(loan.Id);
+        _schedule = schedule.Success ? schedule.Data?.ToList() ?? [] : [];
+        var payments = await RepaymentApi.GetPaymentsAsync(loan.Id);
+        _payments = payments.Success ? payments.Data?.ToList() ?? [] : [];
+        if (!schedule.Success) _error = schedule.Error;
+        else if (!payments.Success) _error = payments.Error;
+    }
+
+    private void ClearSelection() { _selectedLoan = null; _schedule = null; _payments = []; _error = null; }
+
+    private async Task RepayAsync()
+    {
+        if (_selectedLoan is null) return;
+        _saving = true; _error = _message = null;
+        var result = await RepaymentApi.RepayAsync(_selectedLoan.Id, _form);
+        _saving = false;
+        if (!result.Success || result.Data is null) { _error = result.Error; return; }
+        _message = $"Repayment of NPR {result.Data.Amount:N2} posted. Journal {result.Data.FinancialTransactionNumber}. Principal allocated: NPR {result.Data.PrincipalAllocated:N2}, interest: NPR {result.Data.InterestAllocated:N2}, penalty: NPR {result.Data.PenaltyAllocated:N2}, overpayment: NPR {result.Data.OverpaymentAmount:N2}.";
+        await LoadAsync();
+        var refreshed = _loans.FirstOrDefault(x => x.Id == result.Data.LoanId);
+        if (refreshed is not null) await SelectLoanAsync(refreshed); else ClearSelection();
+    }
+
+    private static bool IsFundAccount(string type) => type.Equals("Cash", StringComparison.OrdinalIgnoreCase) || type.Equals("Bank", StringComparison.OrdinalIgnoreCase) || type.Equals("Other", StringComparison.OrdinalIgnoreCase);
+}

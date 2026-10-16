@@ -1,0 +1,114 @@
+@attribute [Authorize]
+@page "/expenses"
+@inject GroupApiClient GroupApi
+@inject ExpenseApiClient ExpenseApi
+
+<PageTitle>Expense Management</PageTitle>
+<h1>Expense Management</h1>
+<p class="muted">Record group expenses against an active expense category and Cash/Bank/Other payment account.</p>
+
+@if (!string.IsNullOrWhiteSpace(_error)) { <div class="alert error">@_error</div> }
+@if (!string.IsNullOrWhiteSpace(_message)) { <div class="alert success">@_message</div> }
+@if (_loading) { <p>Loading...</p> }
+else if (_group is null) { <p>No active group is configured.</p> }
+else
+{
+    <div class="form-grid">
+        <section class="card">
+            <h2>Record Expense</h2>
+            <div class="form-field"><label>Category</label><InputSelect @bind-Value="_expense.ExpenseCategoryId"><option value="0">Select category</option>@foreach (var c in _categories.Where(x => x.IsActive)) { <option value="@c.Id">@c.Name</option> }</InputSelect></div>
+            <div class="form-field"><label>Date</label><NepaliDateInput @bind-Value="_expense.ExpenseDate" /></div>
+            <div class="form-field"><label>Amount</label><InputNumber @bind-Value="_expense.Amount" /></div>
+            <div class="form-field"><label>Payment Method</label><InputSelect @bind-Value="_expense.PaymentMethod"><option>Cash</option><option>Bank</option><option>Online Transfer</option><option>Other</option></InputSelect></div>
+            <div class="form-field"><label>Payment Account</label><InputSelect @bind-Value="_expense.FinancialAccountId"><option value="0">Select account</option>@foreach (var a in _accounts.Where(x => x.IsActive && IsFundAccount(x.AccountType))) { <option value="@a.Id">@a.AccountCode - @a.AccountName</option> }</InputSelect></div>
+            <div class="form-field"><label>Reference</label><InputText @bind-Value="_expense.ReferenceNumber" /></div>
+            <div class="form-field"><label>Description</label><InputText @bind-Value="_expense.Description" /></div>
+            <button class="primary" @onclick="RecordExpenseAsync">Post Expense</button>
+        </section>
+
+        <section class="card">
+            <h2>Expense Categories</h2>
+            <div class="form-field"><label>New Category</label><InputText @bind-Value="_newCategoryName" /></div>
+            <button class="primary" @onclick="CreateCategoryAsync">Add Category</button>
+            <div class="table-wrapper" style="margin-top:1rem"><table class="data-table"><thead><tr><th>Name</th><th>Status</th><th>Action</th></tr></thead><tbody>
+            @foreach (var c in _categories) { <tr><td>@c.Name</td><td>@(c.IsActive ? "Active" : "Inactive")</td><td><button class="secondary" @onclick="() => ToggleCategoryAsync(c)">@(c.IsActive ? "Deactivate" : "Activate")</button></td></tr> }
+            </tbody></table></div>
+        </section>
+    </div>
+
+    <section class="card">
+        <h2>Expense Register</h2>
+        <div class="table-wrapper"><table class="data-table"><thead><tr><th>Expense No</th><th>Date</th><th>Category</th><th>Description</th><th>Payment</th><th>Amount</th><th>Transaction</th></tr></thead><tbody>
+        @foreach (var e in _expenses) { <tr><td>@e.ExpenseNumber</td><td>@e.ExpenseDate.ToNepaliDateString()</td><td>@e.ExpenseCategoryName</td><td>@e.Description</td><td>@e.PaymentMethod<br /><span class="muted">@e.FinancialAccountCode</span></td><td>NPR @e.Amount.ToString("N2")</td><td>@e.FinancialTransactionNumber</td></tr> }
+        </tbody></table></div>
+    </section>
+}
+
+@code {
+    private GroupModel? _group;
+    private List<ExpenseCategoryModel> _categories = [];
+    private List<ExpenseFinancialAccountModel> _accounts = [];
+    private List<ExpenseModel> _expenses = [];
+    private CreateExpenseForm _expense = new() { ExpenseDate = DateTime.Today, PaymentMethod = "Cash" };
+    private string _newCategoryName = string.Empty;
+    private bool _loading = true;
+    private string? _error;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true; _error = _message = null;
+        var groups = await GroupApi.GetGroupsAsync();
+        if (!groups.Success || groups.Groups is null || groups.Groups.Count == 0) { _error = groups.Error ?? "Unable to load the active group."; _loading = false; return; }
+        _group = groups.Groups[0];
+        _expense.GroupId = _group.Id;
+        var categories = await ExpenseApi.GetCategoriesAsync(_group.Id, true);
+        if (!categories.Success) { _error = categories.Error; _loading = false; return; }
+        _categories = categories.Data?.ToList() ?? [];
+        var accounts = await ExpenseApi.GetAccountsAsync(_group.Id);
+        if (!accounts.Success) { _error = accounts.Error; _loading = false; return; }
+        _accounts = accounts.Data?.ToList() ?? [];
+        var expenses = await ExpenseApi.GetExpensesAsync(_group.Id);
+        if (!expenses.Success) { _error = expenses.Error; _loading = false; return; }
+        _expenses = expenses.Data?.ToList() ?? [];
+        _loading = false;
+    }
+
+    private async Task CreateCategoryAsync()
+    {
+        _error = _message = null;
+        if (_group is null || string.IsNullOrWhiteSpace(_newCategoryName)) { _error = "Category name is required."; return; }
+        var result = await ExpenseApi.CreateCategoryAsync(new(_group.Id, _newCategoryName.Trim(), true));
+        if (!result.Success) { _error = result.Error; return; }
+        _newCategoryName = string.Empty; _message = "Expense category created successfully."; await LoadAsync();
+    }
+
+    private async Task ToggleCategoryAsync(ExpenseCategoryModel category)
+    {
+        _error = _message = null;
+        var result = await ExpenseApi.UpdateCategoryAsync(category.Id, new(category.Name, !category.IsActive));
+        if (!result.Success) { _error = result.Error; return; }
+        _message = "Expense category status updated."; await LoadAsync();
+    }
+
+    private async Task RecordExpenseAsync()
+    {
+        _error = _message = null;
+        if (_group is null) return;
+        if (_expense.ExpenseCategoryId <= 0) { _error = "Select an expense category."; return; }
+        if (_expense.FinancialAccountId <= 0) { _error = "Select a payment account."; return; }
+        if (_expense.Amount <= 0) { _error = "Enter an expense amount greater than zero."; return; }
+        if (string.IsNullOrWhiteSpace(_expense.Description)) { _error = "Description is required."; return; }
+        _expense.GroupId = _group.Id;
+        var result = await ExpenseApi.CreateExpenseAsync(new(_expense.GroupId, _expense.ExpenseCategoryId, _expense.ExpenseDate, _expense.Amount, _expense.PaymentMethod, _expense.FinancialAccountId, _expense.ReferenceNumber, _expense.Description.Trim()));
+        if (!result.Success) { _error = result.Error; return; }
+        _message = $"Expense {result.Data?.ExpenseNumber} posted successfully.";
+        _expense = new() { GroupId = _group.Id, ExpenseDate = DateTime.Today, PaymentMethod = "Cash" };
+        await LoadAsync();
+    }
+
+    private static bool IsFundAccount(string type) => type.Equals("Cash", StringComparison.OrdinalIgnoreCase) || type.Equals("Bank", StringComparison.OrdinalIgnoreCase) || type.Equals("Other", StringComparison.OrdinalIgnoreCase);
+    private sealed class CreateExpenseForm { public long GroupId { get; set; } public long ExpenseCategoryId { get; set; } public DateTime ExpenseDate { get; set; } public decimal Amount { get; set; } public string PaymentMethod { get; set; } = "Cash"; public long FinancialAccountId { get; set; } public string? ReferenceNumber { get; set; } public string Description { get; set; } = string.Empty; }
+}

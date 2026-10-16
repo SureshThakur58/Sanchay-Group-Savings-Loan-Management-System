@@ -1,0 +1,157 @@
+@attribute [Authorize]
+@page "/loans"
+@inject GroupApiClient GroupApi
+@inject LoanCalculationApiClient LoanCalculationApi
+
+<PageTitle>Loan Calculation</PageTitle>
+
+<h1>Loan Calculation Engine</h1>
+<p class="muted">Calculate Flat and Reducing Balance loan installments and preview the amortization schedule. Calculations are performed centrally by the backend.</p>
+
+@if (!string.IsNullOrWhiteSpace(_error)) { <div class="alert error">@_error</div> }
+
+@if (_loading)
+{
+    <p>Loading group loan settings...</p>
+}
+else if (_group is null)
+{
+    <p>No active group is configured.</p>
+}
+else
+{
+    <section class="card">
+        <h2>Loan Calculator</h2>
+        <div class="form-grid">
+            <div class="form-field">
+                <label>Loan Amount (NPR)</label>
+                <InputNumber @bind-Value="_request.PrincipalAmount" />
+            </div>
+            <div class="form-field">
+                <label>Annual Interest Rate (%)</label>
+                <InputNumber @bind-Value="_request.AnnualInterestRate" />
+            </div>
+            <div class="form-field">
+                <label>Duration (Months)</label>
+                <InputNumber @bind-Value="_request.DurationMonths" />
+            </div>
+            <div class="form-field">
+                <label>Interest Method</label>
+                <InputSelect @bind-Value="_request.InterestMethod">
+                    <option value="ReducingBalance">Reducing Balance</option>
+                    <option value="Flat">Flat</option>
+                </InputSelect>
+            </div>
+            <div class="form-field">
+                <label>First Due Date</label>
+                <NepaliDateInput @bind-Value="_request.FirstDueDate" />
+            </div>
+        </div>
+        <button class="primary" @onclick="CalculateAsync">Calculate Loan</button>
+    </section>
+
+    @if (_result is not null)
+    {
+        <div class="card-grid">
+            <div class="summary-card"><span>Principal</span><strong>NPR @_result.PrincipalAmount.ToString("N2")</strong></div>
+            <div class="summary-card"><span>Monthly Installment</span><strong>NPR @_result.MonthlyInstallment.ToString("N2")</strong></div>
+            <div class="summary-card"><span>Total Interest</span><strong>NPR @_result.TotalInterest.ToString("N2")</strong></div>
+            <div class="summary-card"><span>Total Repayment</span><strong>NPR @_result.TotalRepayment.ToString("N2")</strong></div>
+        </div>
+
+        <section class="card">
+            <h2>Amortization Schedule</h2>
+            <div class="table-wrapper">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Due Date</th>
+                            <th>Opening Principal</th>
+                            <th>Principal</th>
+                            <th>Interest</th>
+                            <th>Installment</th>
+                            <th>Closing Principal</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var line in _result.Schedule)
+                    {
+                        <tr>
+                            <td>@line.InstallmentNumber</td>
+                            <td>@line.DueDate.ToNepaliDateString()</td>
+                            <td>NPR @line.OpeningPrincipal.ToString("N2")</td>
+                            <td>NPR @line.PrincipalDue.ToString("N2")</td>
+                            <td>NPR @line.InterestDue.ToString("N2")</td>
+                            <td>NPR @line.TotalDue.ToString("N2")</td>
+                            <td>NPR @line.ClosingPrincipal.ToString("N2")</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    }
+}
+
+@code {
+    private GroupModel? _group;
+    private LoanCalculationRequestModel _request = new();
+    private LoanCalculationResultModel? _result;
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var groups = await GroupApi.GetGroupsAsync();
+        if (!groups.Success || groups.Groups is null || groups.Groups.Count == 0)
+        {
+            _error = groups.Error ?? "Unable to load the active group.";
+            _loading = false;
+            return;
+        }
+
+        _group = groups.Groups[0];
+        var settings = _group.Settings;
+        _request = new LoanCalculationRequestModel
+        {
+            GroupId = _group.Id,
+            PrincipalAmount = 100000m,
+            AnnualInterestRate = settings?.DefaultLoanInterestRate ?? 0m,
+            DurationMonths = settings?.DefaultLoanDuration ?? 1,
+            InterestMethod = NormalizeMethod(settings?.LoanInterestMethod),
+            FirstDueDate = DateTime.Today.AddMonths(1)
+        };
+        _loading = false;
+    }
+
+    private async Task CalculateAsync()
+    {
+        _error = null;
+        _result = null;
+
+        if (_request.PrincipalAmount <= 0m)
+        {
+            _error = "Loan amount must be greater than zero.";
+            return;
+        }
+
+        if (_request.DurationMonths <= 0)
+        {
+            _error = "Loan duration must be greater than zero.";
+            return;
+        }
+
+        var result = await LoanCalculationApi.CalculateAsync(_request);
+        if (!result.Success || result.Data is null)
+        {
+            _error = result.Error ?? "Unable to calculate the loan.";
+            return;
+        }
+
+        _result = result.Data;
+    }
+
+    private static string NormalizeMethod(string? method) =>
+        method?.Equals("Flat", StringComparison.OrdinalIgnoreCase) == true ? "Flat" : "ReducingBalance";
+}

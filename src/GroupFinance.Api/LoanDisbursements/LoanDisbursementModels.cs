@@ -1,0 +1,73 @@
+namespace GroupFinance.Api.LoanDisbursements;
+
+public sealed record LoanDisbursementRequest(
+    long FinancialAccountId,
+    DateTime DisbursementDate,
+    string? ReferenceNumber = null,
+    string? Description = null);
+
+public sealed record LoanDisbursementResponse(
+    long LoanId,
+    long LoanApplicationId,
+    string LoanNumber,
+    string LoanApplicationNumber,
+    long GroupId,
+    string GroupCode,
+    long MemberId,
+    string MemberNumber,
+    string MemberName,
+    DateTime DisbursementDate,
+    decimal PrincipalAmount,
+    decimal InterestRate,
+    string InterestMethod,
+    int DurationMonths,
+    string InstallmentFrequency,
+    decimal MonthlyInstallment,
+    decimal TotalInterest,
+    decimal TotalRepayment,
+    string Status,
+    long FinancialTransactionId,
+    string FinancialTransactionNumber,
+    long FinancialAccountId,
+    string FinancialAccountCode,
+    string FinancialAccountName,
+    int ScheduleCount);
+
+public sealed record LoanSummaryResponse(
+    long Id,
+    long GroupId,
+    long MemberId,
+    string MemberNumber,
+    string MemberName,
+    long LoanApplicationId,
+    string LoanNumber,
+    DateTime DisbursementDate,
+    decimal PrincipalAmount,
+    decimal InterestRate,
+    string InterestMethod,
+    int DurationMonths,
+    decimal InstallmentAmount,
+    decimal TotalInterest,
+    decimal TotalRepayment,
+    decimal PrincipalPaid,
+    decimal InterestPaid,
+    decimal PenaltyPaid,
+    decimal OverpaymentAmount,
+    decimal OutstandingPrincipal,
+    string Status);
+
+public sealed record LoanScheduleResponse(
+    long Id,
+    long LoanId,
+    int InstallmentNumber,
+    DateTime DueDate,
+    decimal OpeningPrincipal,
+    decimal PrincipalDue,
+    decimal InterestDue,
+    decimal PenaltyDue,
+    decimal TotalDue,
+    decimal PrincipalPaid,
+    decimal InterestPaid,
+    decimal PenaltyPaid,
+    decimal OutstandingAmount,
+    string Status);

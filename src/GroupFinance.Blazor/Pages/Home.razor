@@ -1,0 +1,252 @@
+@attribute [Authorize]
+@page "/"
+@inject GroupApiClient GroupApi
+@inject DashboardApiClient DashboardApi
+
+<PageTitle>Dashboard</PageTitle>
+
+<div class="dashboard-page">
+    <div class="dashboard-hero">
+        <div><span class="eyebrow">FINANCIAL OVERVIEW</span><h1>Dashboard</h1><p>Complete financial overview of the configured group as of @(_dashboard is null ? "today" : $"{NepaliDateFormatter.Long(_dashboard.AsOfDate)} B.S.").</p></div>
+        <button class="primary-button" @onclick="RefreshAsync" disabled="@_loading">↻ @(_loading ? "Refreshing…" : "Refresh")</button>
+    </div>
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="alert error">@_error</div>
+    }
+
+    @if (_loading && _dashboard is null)
+    {
+        <section class="setup-card"><p>Loading dashboard...</p></section>
+    }
+    else if (_dashboard is not null)
+    {
+        <section class="dashboard-kpi-grid">
+            <div class="dashboard-kpi">
+                <span>Total Members</span>
+                <strong>@_dashboard.TotalMembers</strong>
+            </div>
+            <div class="dashboard-kpi">
+                <span>Active Members</span>
+                <strong>@_dashboard.ActiveMembers</strong>
+            </div>
+            <div class="dashboard-kpi">
+                <span>Total Contributions</span>
+                <strong>NPR @_dashboard.TotalContributions.ToString("N2")</strong>
+            </div>
+            <div class="dashboard-kpi">
+                <span>Total Loans</span>
+                <strong>NPR @_dashboard.TotalLoans.ToString("N2")</strong>
+            </div>
+            <div class="dashboard-kpi">
+                <span>Outstanding Loans</span>
+                <strong>NPR @_dashboard.OutstandingLoans.ToString("N2")</strong>
+            </div>
+            <div class="dashboard-kpi">
+                <span>Interest Earned</span>
+                <strong>NPR @_dashboard.InterestEarned.ToString("N2")</strong>
+            </div>
+            <div class="dashboard-kpi">
+                <span>Expenses</span>
+                <strong>NPR @_dashboard.Expenses.ToString("N2")</strong>
+            </div>
+            <div class="dashboard-kpi">
+                <span>Net Profit</span>
+                <strong>NPR @_dashboard.NetProfit.ToString("N2")</strong>
+            </div>
+            <div class="dashboard-kpi">
+                <span>Available Cash</span>
+                <strong>NPR @_dashboard.AvailableCash.ToString("N2")</strong>
+            </div>
+            <div class="dashboard-kpi dashboard-kpi-warning">
+                <span>Overdue Loans</span>
+                <strong>@_dashboard.OverdueLoans</strong>
+            </div>
+            <div class="dashboard-kpi dashboard-kpi-warning">
+                <span>Overdue Amount</span>
+                <strong>NPR @_dashboard.OverdueAmount.ToString("N2")</strong>
+            </div>
+        </section>
+
+        <section class="dashboard-chart-grid">
+            <div class="setup-card dashboard-card">
+                <div class="section-heading">
+                    <div>
+                        <h2>Fund Distribution</h2>
+                        <p class="muted">Current financial position by major fund category.</p>
+                    </div>
+                </div>
+                <div class="fund-bars">
+                    @foreach (var item in FundItems)
+                    {
+                        <div class="fund-bar-row">
+                            <div class="fund-bar-label">
+                                <span>@item.Label</span>
+                                <strong>NPR @item.Value.ToString("N2")</strong>
+                            </div>
+                            <div class="fund-bar-track">
+                                <div class="fund-bar-fill" style="@BarStyle(item.Value, FundMaximum)"></div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <div class="setup-card dashboard-card">
+                <div class="section-heading">
+                    <div>
+                        <h2>Loan Status</h2>
+                        <p class="muted">Loan position as of the dashboard date.</p>
+                    </div>
+                </div>
+                <div class="dashboard-status-list">
+                    @foreach (var status in _dashboard.LoanStatus)
+                    {
+                        <div class="dashboard-status-row">
+                            <span>@status.Status</span>
+                            <strong>@status.Count</strong>
+                        </div>
+                    }
+                </div>
+            </div>
+        </section>
+
+        <section class="dashboard-chart-grid">
+            <div class="setup-card dashboard-card">
+                <div class="section-heading">
+                    <div>
+                        <h2>Monthly Collection</h2>
+                        <p class="muted">Posted member contributions during B.S. @NepaliDateFormatter.Year(_dashboard.AsOfDate).</p>
+                    </div>
+                </div>
+                <div class="monthly-chart">
+                    @foreach (var item in _dashboard.MonthlyCollections)
+                    {
+                        <div class="monthly-column">
+                            <div class="monthly-value">@(item.Amount == 0m ? "" : item.Amount.ToString("N0"))</div>
+                            <div class="monthly-bar-track">
+                                <div class="monthly-bar-fill" style="@BarHeightStyle(item.Amount, CollectionMaximum)"></div>
+                            </div>
+                            <span><strong>@item.MonthName</strong><small>@item.MonthName</small></span>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <div class="setup-card dashboard-card">
+                <div class="section-heading">
+                    <div>
+                        <h2>Income vs Expense</h2>
+                        <p class="muted">Posted income, costs and profit by month.</p>
+                    </div>
+                </div>
+                <div class="income-expense-chart">
+                    @foreach (var item in _dashboard.IncomeVsExpense)
+                    {
+                        <div class="income-expense-row">
+                            <div class="income-expense-month">@item.MonthName</div>
+                            <div class="income-expense-bars">
+                                <div class="income-expense-line">
+                                    <span>Income</span>
+                                    <div class="income-expense-track">
+                                        <div class="income-bar" style="@BarStyle(item.Income, IncomeExpenseMaximum)"></div>
+                                    </div>
+                                    <strong>NPR @item.Income.ToString("N0")</strong>
+                                </div>
+                                <div class="income-expense-line">
+                                    <span>Expense</span>
+                                    <div class="income-expense-track">
+                                        <div class="expense-bar" style="@BarStyle(item.Expense, IncomeExpenseMaximum)"></div>
+                                    </div>
+                                    <strong>NPR @item.Expense.ToString("N0")</strong>
+                                </div>
+                                <div class="income-expense-line">
+                                    <span>Profit</span>
+                                    <div class="income-expense-track">
+                                        <div class="profit-bar" style="@BarStyle(item.Profit, IncomeExpenseMaximum)"></div>
+                                    </div>
+                                    <strong>NPR @item.Profit.ToString("N0")</strong>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </section>
+    }
+</div>
+
+@code {
+    private DashboardModel? _dashboard;
+    private bool _loading = true;
+    private string? _error;
+
+    private IReadOnlyList<(string Label, decimal Value)> FundItems =>
+        _dashboard is null
+            ? []
+            : new[]
+            {
+                ("Cash", _dashboard.FundDistribution.Cash),
+                ("Loans", _dashboard.FundDistribution.Loans),
+                ("Assets", _dashboard.FundDistribution.Assets),
+                ("Investments", _dashboard.FundDistribution.Investments)
+            };
+
+    private decimal FundMaximum => FundItems.Count == 0 ? 0m : FundItems.Max(x => Math.Abs(x.Value));
+    private decimal CollectionMaximum => _dashboard is null ? 0m : _dashboard.MonthlyCollections.Max(x => Math.Abs(x.Amount));
+    private decimal IncomeExpenseMaximum => _dashboard is null
+        ? 0m
+        : _dashboard.IncomeVsExpense.SelectMany(x => new[] { Math.Abs(x.Income), Math.Abs(x.Expense), Math.Abs(x.Profit) }).DefaultIfEmpty(0m).Max();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            var groups = await GroupApi.GetGroupsAsync();
+            if (!groups.Success || groups.Groups is null || groups.Groups.Count == 0)
+            {
+                _error = groups.Error ?? "Unable to load the active group.";
+                return;
+            }
+
+            var group = groups.Groups[0];
+            var result = await DashboardApi.GetAsync(group.Id);
+            if (!result.Success || result.Data is null)
+            {
+                _error = result.Error ?? "Unable to load the dashboard.";
+                return;
+            }
+
+            _dashboard = result.Data;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+
+    private static string BarStyle(decimal value, decimal maximum) => $"width:{Percentage(value, maximum):0.##}%";
+    private static string BarHeightStyle(decimal value, decimal maximum) => $"height:{Percentage(value, maximum):0.##}%";
+
+    private static decimal Percentage(decimal value, decimal maximum)
+    {
+        if (maximum <= 0m || value <= 0m)
+            return 0m;
+
+        return Math.Clamp(value / maximum * 100m, 0m, 100m);
+    }
+
+}

@@ -1,0 +1,127 @@
+@attribute [Authorize]
+@page "/interest-profit"
+@inject GroupApiClient GroupApi
+@inject InterestProfitApiClient InterestProfitApi
+
+<PageTitle>Interest & Profit</PageTitle>
+<h1>Interest & Profit Engine</h1>
+<p class="muted">Calculate loan interest for a period and produce the group's transaction-based profit summary. This phase does not distribute profit.</p>
+
+@if (!string.IsNullOrWhiteSpace(_error)) { <div class="alert error">@_error</div> }
+@if (!string.IsNullOrWhiteSpace(_message)) { <div class="alert success">@_message</div> }
+@if (_loading) { <p>Loading...</p> }
+else if (_group is null) { <p>No active group is configured.</p> }
+else
+{
+    <div class="form-grid">
+        <section class="card">
+            <h2>Interest Calculation</h2>
+            <div class="form-field"><label>Period Start</label><NepaliDateInput @bind-Value="_interest.PeriodStart" /></div>
+            <div class="form-field"><label>Period End</label><NepaliDateInput @bind-Value="_interest.PeriodEnd" /></div>
+            <div class="form-field"><label>Loan ID (optional)</label><InputNumber @bind-Value="_interest.LoanId" /></div>
+            <button class="primary" @onclick="CalculateInterestAsync">Calculate Interest</button>
+        </section>
+
+        <section class="card">
+            <h2>Profit Calculation</h2>
+            <div class="form-field"><label>Period Start</label><NepaliDateInput @bind-Value="_profit.PeriodStart" /></div>
+            <div class="form-field"><label>Period End</label><NepaliDateInput @bind-Value="_profit.PeriodEnd" /></div>
+            <button class="primary" @onclick="CalculateProfitAsync">Calculate Profit</button>
+            @if (_profitResult is not null)
+            {
+                <div class="summary-grid">
+                    <div><span>Loan Interest</span><strong>NPR @_profitResult.LoanInterestIncome.ToString("N2")</strong></div>
+                    <div><span>Investment Income</span><strong>NPR @_profitResult.InvestmentIncome.ToString("N2")</strong></div>
+                    <div><span>Other Income</span><strong>NPR @_profitResult.OtherIncome.ToString("N2")</strong></div>
+                    <div><span>Total Income</span><strong>NPR @_profitResult.TotalIncome.ToString("N2")</strong></div>
+                    <div><span>Expenses</span><strong>NPR @_profitResult.Expenses.ToString("N2")</strong></div>
+                    <div><span>Other Costs</span><strong>NPR @_profitResult.OtherCosts.ToString("N2")</strong></div>
+                    <div><span>Net Profit</span><strong>NPR @_profitResult.NetProfit.ToString("N2")</strong></div>
+                    <div><span>Reserve (@_profitResult.ReserveRate.ToString("N2")%)</span><strong>NPR @_profitResult.ReserveAmount.ToString("N2")</strong></div>
+                    <div><span>Distributable Preview</span><strong>NPR @_profitResult.DistributableAmount.ToString("N2")</strong></div>
+                </div>
+            }
+        </section>
+    </div>
+
+    <section class="card">
+        <h2>Interest Calculation History</h2>
+        <button class="secondary" @onclick="LoadInterestAsync">Refresh</button>
+        <div class="table-wrapper"><table class="data-table"><thead><tr><th>Loan</th><th>Member</th><th>Period</th><th>Opening Principal</th><th>Rate</th><th>Method</th><th>Interest</th></tr></thead><tbody>
+        @foreach (var row in _interestRows)
+        {
+            <tr><td>@row.LoanNumber</td><td>@row.MemberName</td><td>@row.PeriodStart.ToNepaliDateString() - @row.PeriodEnd.ToNepaliDateString()</td><td>NPR @row.OpeningPrincipal.ToString("N2")</td><td>@row.InterestRate.ToString("N2")%</td><td>@row.CalculationMethod</td><td>NPR @row.InterestAmount.ToString("N2")</td></tr>
+        }
+        </tbody></table></div>
+    </section>
+}
+
+@code {
+    private GroupModel? _group;
+    private CalculateInterestModel _interest = new();
+    private CalculateProfitModel _profit = new();
+    private ProfitCalculationModel? _profitResult;
+    private List<InterestCalculationModel> _interestRows = [];
+    private bool _loading = true;
+    private string? _error;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var today = DateTime.Today;
+        _interest.PeriodStart = new DateTime(today.Year, 1, 1);
+        _interest.PeriodEnd = new DateTime(today.Year, 12, 31);
+        _profit.PeriodStart = _interest.PeriodStart;
+        _profit.PeriodEnd = _interest.PeriodEnd;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = _message = null;
+        var groups = await GroupApi.GetGroupsAsync();
+        if (!groups.Success || groups.Groups is null || groups.Groups.Count == 0)
+        {
+            _error = groups.Error ?? "Unable to load the active group.";
+            _loading = false;
+            return;
+        }
+        _group = groups.Groups[0];
+        _interest.GroupId = _group.Id;
+        _profit.GroupId = _group.Id;
+        await LoadInterestAsync();
+        _loading = false;
+    }
+
+    private async Task CalculateInterestAsync()
+    {
+        _error = _message = null;
+        if (_group is null) return;
+        _interest.GroupId = _group.Id;
+        var result = await InterestProfitApi.CalculateInterestAsync(_interest);
+        if (!result.Success) { _error = result.Error; return; }
+        _message = $"Interest calculation completed for {result.Data?.Count ?? 0} loan(s).";
+        _interestRows = result.Data?.ToList() ?? [];
+        await LoadInterestAsync();
+    }
+
+    private async Task LoadInterestAsync()
+    {
+        if (_group is null) return;
+        var result = await InterestProfitApi.GetInterestAsync(_group.Id);
+        if (!result.Success) { _error = result.Error; return; }
+        _interestRows = result.Data?.ToList() ?? [];
+    }
+
+    private async Task CalculateProfitAsync()
+    {
+        _error = _message = null;
+        if (_group is null) return;
+        _profit.GroupId = _group.Id;
+        var result = await InterestProfitApi.CalculateProfitAsync(_profit);
+        if (!result.Success) { _error = result.Error; return; }
+        _profitResult = result.Data;
+        _message = "Profit calculation completed from posted financial transactions.";
+    }
+}

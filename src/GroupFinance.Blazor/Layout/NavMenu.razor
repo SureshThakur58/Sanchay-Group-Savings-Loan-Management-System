@@ -1,0 +1,37 @@
+<nav class="side-nav" aria-label="Main navigation">
+    <div class="nav-section"><span>Overview</span>
+        <NavLink href="" Match="NavLinkMatch.All"><b>⌂</b> Dashboard</NavLink>
+    </div>
+    <div class="nav-section"><span>Members &amp; Savings</span>
+        <NavLink href="members"><b>♙</b> Members</NavLink>
+        <NavLink href="contributions"><b>₨</b> Contributions</NavLink>
+        <NavLink href="group-fund"><b>▣</b> Group Fund / Cash-Bank</NavLink>
+    </div>
+    <div class="nav-section"><span>Loans</span>
+        <NavLink href="loans"><b>◈</b> Loan Calculator</NavLink>
+        <NavLink href="loan-applications"><b>▤</b> Loan Applications</NavLink>
+        <NavLink href="loan-disbursement"><b>↗</b> Loan Disbursement</NavLink>
+        <NavLink href="loan-repayment"><b>↙</b> Loan Repayment</NavLink>
+        <NavLink href="overdue-loans"><b>!</b> Overdue Loans</NavLink>
+    </div>
+    <div class="nav-section"><span>Finance</span>
+        <NavLink href="expenses"><b>−</b> Expenses</NavLink>
+        <NavLink href="assets"><b>◆</b> Assets</NavLink>
+        <NavLink href="interest-profit"><b>%</b> Interest &amp; Profit</NavLink>
+        <NavLink href="profit-distribution"><b>◎</b> Profit Distribution</NavLink>
+        <NavLink href="transactions"><b>≡</b> Ledger &amp; Financial Views</NavLink>
+        <NavLink href="reports"><b>▥</b> Reports</NavLink>
+    </div>
+    <div class="nav-section"><span>Operations</span>
+        <NavLink href="receipts"><b>□</b> Receipts</NavLink>
+        <NavLink href="audit-log"><b>⌕</b> Audit Trail &amp; Reversal</NavLink>
+        <NavLink href="notifications"><b>◔</b> Notifications</NavLink>
+        <NavLink href="attachments"><b>↥</b> File Storage</NavLink>
+    </div>
+    <div class="nav-section"><span>Configuration</span>
+        <NavLink href="group-setup"><b>⚙</b> Group Setup</NavLink>
+        <AuthorizeView Roles="SuperAdministrator">
+            <Authorized><NavLink href="administration"><b>♜</b> Administration</NavLink><NavLink href="backup-recovery"><b>⟳</b> Backup &amp; Recovery</NavLink></Authorized>
+        </AuthorizeView>
+    </div>
+</nav>

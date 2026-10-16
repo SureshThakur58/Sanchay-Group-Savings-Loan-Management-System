@@ -1,0 +1,28 @@
+# Visual Studio / .NET
+.vs/
+*.user
+*.suo
+bin/
+obj/
+TestResults/
+*.nupkg
+*.snupkg
+
+# Rider
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local configuration / secrets
+appsettings.Local.json
+secrets.json
+.env
+
+# Publish output
+publish/
+artifacts/
+
+# Runtime uploaded attachments
+App_Data/Attachments/

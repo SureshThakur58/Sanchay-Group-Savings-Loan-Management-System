@@ -1,0 +1,252 @@
+@page "/administration"
+@attribute [Authorize(Policy = "Users.View")]
+@inject AdministrationApiClient AdminApi
+
+<PageTitle>Administration</PageTitle>
+
+<div class="admin-page">
+    <div class="page-heading">
+        <div>
+            <h1>Administration</h1>
+            <p class="page-description">Manage application users, the four system roles, permission mappings and technical system settings.</p>
+        </div>
+        <button class="secondary-button" @onclick="LoadAllAsync" disabled="@_busy">Refresh</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error)) { <div class="alert error">@_error</div> }
+    @if (!string.IsNullOrWhiteSpace(_success)) { <div class="alert success">@_success</div> }
+
+    <div class="admin-tabs">
+        <button class="admin-tab @TabClass("users")" @onclick="SelectUsersTab">Users</button>
+        <button class="admin-tab @TabClass("roles")" @onclick="SelectRolesTab">Roles & Permissions</button>
+        <button class="admin-tab @TabClass("settings")" @onclick="SelectSettingsTab">System Settings</button>
+    </div>
+
+    @if (_loading)
+    {
+        <section class="setup-card"><p>Loading administration data...</p></section>
+    }
+    else if (_tab == "users")
+    {
+        <section class="setup-card">
+            <div class="section-heading"><div><h2>Create User</h2><p class="muted">New users must change their password after the first login.</p></div></div>
+            <div class="form-grid">
+                <div class="form-field"><label>User Name</label><InputText @bind-Value="_newUser.UserName" /></div>
+                <div class="form-field"><label>Full Name</label><InputText @bind-Value="_newUser.FullName" /></div>
+                <div class="form-field"><label>Email (optional)</label><InputText @bind-Value="_newUser.Email" /></div>
+                <div class="form-field"><label>Initial Password</label><InputText @bind-Value="_newUser.Password" type="password" /></div>
+                <div class="form-field"><label>Role</label><select @bind="_newUser.RoleName">@foreach (var role in _roles){<option value="@role.Name">@role.Name</option>}</select></div>
+            </div>
+            <button class="primary-button" @onclick="CreateUserAsync" disabled="@_busy">Create User</button>
+        </section>
+
+        <section class="setup-card">
+            <div class="section-heading"><div><h2>Users</h2><p class="muted">User accounts can be activated/deactivated and assigned one of the system roles.</p></div></div>
+            <div class="table-wrap"><table class="data-table"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Status</th><th>Security</th><th>Actions</th></tr></thead><tbody>
+            @foreach (var user in _users)
+            {
+                <tr>
+                    <td><strong>@user.FullName</strong><br /><span class="muted">@user.UserName</span></td>
+                    <td>@(user.Email ?? "-")</td>
+                    <td>@string.Join(", ", user.Roles)</td>
+                    <td><span class="badge @(user.IsActive ? "active" : "inactive")">@(user.IsActive ? "Active" : "Inactive")</span></td>
+                    <td>@(user.MustChangePassword ? "Password change required" : "Normal")</td>
+                    <td><button class="link-button" @onclick="() => EditUser(user)">Edit</button><button class="link-button" @onclick="() => OpenResetPassword(user)">Reset Password</button></td>
+                </tr>
+            }
+            </tbody></table></div>
+        </section>
+
+        @if (_editingUser is not null)
+        {
+            <section class="setup-card">
+                <div class="section-heading"><div><h2>Edit User: @_editingUser.UserName</h2><p class="muted">Deactivating your own account is blocked by the API.</p></div><button class="secondary-button" @onclick="CancelEdit">Cancel</button></div>
+                <div class="form-grid">
+                    <div class="form-field"><label>Full Name</label><InputText @bind-Value="_editUser.FullName" /></div>
+                    <div class="form-field"><label>Email</label><InputText @bind-Value="_editUser.Email" /></div>
+                    <div class="form-field"><label>Role</label><select @bind="_editUser.RoleName">@foreach (var role in _roles){<option value="@role.Name">@role.Name</option>}</select></div>
+                    <div class="form-field checkbox-field"><label><InputCheckbox @bind-Value="_editUser.IsActive" /> Active</label></div>
+                </div>
+                <button class="primary-button" @onclick="UpdateUserAsync" disabled="@_busy">Save User</button>
+            </section>
+        }
+
+        @if (_resetUser is not null)
+        {
+            <section class="setup-card">
+                <div class="section-heading"><div><h2>Reset Password: @_resetUser.UserName</h2><p class="muted">The user will be required to change this password on next login.</p></div><button class="secondary-button" @onclick="CancelReset">Cancel</button></div>
+                <div class="form-field"><label>New Password</label><InputText @bind-Value="_resetPassword.NewPassword" type="password" /></div>
+                <button class="primary-button" @onclick="ResetPasswordAsync" disabled="@_busy">Reset Password</button>
+            </section>
+        }
+    }
+    else if (_tab == "roles")
+    {
+        <section class="setup-card">
+            <h2>Roles</h2>
+            <p class="muted">The four required roles are system roles. Their names cannot be deleted or renamed; permission mappings can be adjusted by a Super Administrator.</p>
+            @foreach (var role in _roles)
+            {
+                <div class="admin-role-card">
+                    <div class="section-heading"><div><h3>@role.Name</h3><p class="muted">@role.Description</p></div></div>
+                    <div class="form-field"><label>Description</label><input class="text-input" value="@GetRoleDescription(role.Id)" @onchange="e => SetRoleDescription(role.Id, e.Value?.ToString())" /></div>
+                    <div class="permission-grid">
+                        @foreach (var permission in _permissions.Where(x => true))
+                        {
+                            var checkedValue = IsPermissionSelected(role.Id, permission.Code);
+                            <label class="permission-item"><input type="checkbox" checked="@checkedValue" @onchange="e => SetPermission(role.Id, permission.Code, e.Value is bool b && b)" /> <span><strong>@permission.Code</strong><small>@permission.Name</small></span></label>
+                        }
+                    </div>
+                    <button class="primary-button" @onclick="() => SaveRoleAsync(role)" disabled="@_busy">Save Role Permissions</button>
+                </div>
+            }
+        </section>
+
+        <section class="setup-card">
+            <h2>Permission Catalog</h2>
+            <p class="muted">Permissions are application-defined security codes. This phase does not create arbitrary permission codes.</p>
+            <div class="table-wrap"><table class="data-table"><thead><tr><th>Module</th><th>Code</th><th>Name</th></tr></thead><tbody>@foreach(var p in _permissions){<tr><td>@p.Module</td><td><code>@p.Code</code></td><td>@p.Name</td></tr>}</tbody></table></div>
+        </section>
+    }
+    else
+    {
+        <section class="setup-card">
+            <h2>System Settings</h2>
+            <p class="muted">Technical application settings stored in the SystemSettings table. Financial/business rules remain under Group Setup.</p>
+            @if (_settings.Count == 0) { <p class="muted">No system settings are currently stored.</p> }
+            @foreach (var setting in _settings)
+            {
+                <div class="admin-setting-row">
+                    <div><strong>@setting.SettingKey</strong><p class="muted">@(setting.Description ?? "No description")</p></div>
+                    <input class="text-input" value="@GetSettingValue(setting.Id)" @onchange="e => SetSettingValue(setting.Id, e.Value?.ToString())" />
+                    <button class="secondary-button" @onclick="() => SaveSettingAsync(setting)" disabled="@_busy">Save</button>
+                </div>
+            }
+        </section>
+    }
+</div>
+
+@code {
+    private readonly List<UserAdminModel> _users = [];
+    private readonly List<RoleAdminModel> _roles = [];
+    private readonly List<PermissionAdminModel> _permissions = [];
+    private readonly List<SystemSettingAdminModel> _settings = [];
+    private readonly Dictionary<long, string> _roleDescriptions = [];
+    private readonly Dictionary<long, HashSet<string>> _rolePermissionSelections = [];
+    private readonly Dictionary<long, string> _settingValues = [];
+    private readonly CreateUserModel _newUser = new();
+    private readonly UpdateUserModel _editUser = new();
+    private readonly ResetPasswordModel _resetPassword = new();
+    private UserAdminModel? _editingUser;
+    private UserAdminModel? _resetUser;
+    private string _tab = "users";
+    private bool _loading = true;
+    private bool _busy;
+    private string? _error;
+    private string? _success;
+
+    protected override async Task OnInitializedAsync() => await LoadAllAsync();
+
+    private async Task LoadAllAsync()
+    {
+        _loading = true; _error = null;
+        var usersTask = AdminApi.GetUsersAsync();
+        var rolesTask = AdminApi.GetRolesAsync();
+        var permissionsTask = AdminApi.GetPermissionsAsync();
+        var settingsTask = AdminApi.GetSystemSettingsAsync();
+        var users = await usersTask; var roles = await rolesTask; var permissions = await permissionsTask; var settings = await settingsTask;
+        if (!users.Success) _error = users.Error;
+        if (!roles.Success) _error = roles.Error ?? _error;
+        if (!permissions.Success) _error = permissions.Error ?? _error;
+        if (!settings.Success) _error = settings.Error ?? _error;
+        _users.Clear(); if (users.Data is not null) _users.AddRange(users.Data);
+        _roles.Clear(); if (roles.Data is not null) _roles.AddRange(roles.Data);
+        _permissions.Clear(); if (permissions.Data is not null) _permissions.AddRange(permissions.Data);
+        _settings.Clear(); if (settings.Data is not null) _settings.AddRange(settings.Data);
+        _roleDescriptions.Clear(); _rolePermissionSelections.Clear();
+        foreach (var role in _roles) { _roleDescriptions[role.Id] = role.Description; _rolePermissionSelections[role.Id] = new HashSet<string>(role.PermissionCodes, StringComparer.OrdinalIgnoreCase); }
+        _settingValues.Clear(); foreach (var setting in _settings) _settingValues[setting.Id] = setting.SettingValue;
+        _newUser.RoleName = _roles.FirstOrDefault()?.Name ?? "GroupViewer";
+        _loading = false;
+    }
+
+    private string TabClass(string tab) => _tab == tab ? "active" : string.Empty;
+    private void SelectUsersTab() => _tab = "users";
+    private void SelectRolesTab() => _tab = "roles";
+    private void SelectSettingsTab() => _tab = "settings";
+
+    private async Task CreateUserAsync()
+    {
+        _busy = true; _error = null; _success = null;
+        var result = await AdminApi.CreateUserAsync(_newUser);
+        if (!result.Success) _error = result.Error;
+        else { _success = $"User '{_newUser.UserName}' created successfully."; _newUser.UserName = string.Empty; _newUser.FullName = string.Empty; _newUser.Email = null; _newUser.Password = string.Empty; await LoadAllAsync(); }
+        _busy = false;
+    }
+
+    private void EditUser(UserAdminModel user)
+    {
+        _editingUser = user; _editUser.FullName = user.FullName; _editUser.Email = user.Email; _editUser.RoleName = user.Roles.FirstOrDefault() ?? "GroupViewer"; _editUser.IsActive = user.IsActive;
+        _resetUser = null;
+    }
+
+    private void CancelEdit() => _editingUser = null;
+    private async Task UpdateUserAsync()
+    {
+        if (_editingUser is null) return; _busy = true; _error = null; _success = null;
+        var result = await AdminApi.UpdateUserAsync(_editingUser.Id, _editUser);
+        if (!result.Success) _error = result.Error; else { _success = "User updated successfully."; _editingUser = null; await LoadAllAsync(); }
+        _busy = false;
+    }
+
+    private void OpenResetPassword(UserAdminModel user) { _resetUser = user; _resetPassword.NewPassword = string.Empty; _editingUser = null; }
+    private void CancelReset() => _resetUser = null;
+    private async Task ResetPasswordAsync()
+    {
+        if (_resetUser is null) return; _busy = true; _error = null; _success = null;
+        var result = await AdminApi.ResetPasswordAsync(_resetUser.Id, _resetPassword);
+        if (!result.Success) _error = result.Error; else { _success = "Password reset successfully."; _resetUser = null; await LoadAllAsync(); }
+        _busy = false;
+    }
+
+    private string GetRoleDescription(long roleId) => _roleDescriptions.TryGetValue(roleId, out var value) ? value : string.Empty;
+
+    private void SetRoleDescription(long roleId, string? value)
+    {
+        _roleDescriptions[roleId] = value ?? string.Empty;
+    }
+
+    private string GetSettingValue(long settingId) => _settingValues.TryGetValue(settingId, out var value) ? value : string.Empty;
+
+    private void SetSettingValue(long settingId, string? value)
+    {
+        _settingValues[settingId] = value ?? string.Empty;
+    }
+
+    private bool IsPermissionSelected(long roleId, string code) => _rolePermissionSelections.TryGetValue(roleId, out var set) && set.Contains(code);
+    private void SetPermission(long roleId, string code, bool selected)
+    {
+        if (!_rolePermissionSelections.TryGetValue(roleId, out var set)) return;
+        if (selected) set.Add(code); else set.Remove(code);
+    }
+
+    private async Task SaveRoleAsync(RoleAdminModel role)
+    {
+        _busy = true; _error = null; _success = null;
+        var description = new UpdateRoleModel { Description = _roleDescriptions[role.Id] };
+        var result = await AdminApi.UpdateRoleAsync(role.Id, description);
+        if (!result.Success) { _error = result.Error; _busy = false; return; }
+        var permissions = new UpdateRolePermissionsModel { PermissionCodes = _rolePermissionSelections[role.Id].OrderBy(x => x).ToList() };
+        var permissionResult = await AdminApi.UpdateRolePermissionsAsync(role.Id, permissions);
+        if (!permissionResult.Success) _error = permissionResult.Error; else { _success = $"{role.Name} permissions saved."; await LoadAllAsync(); }
+        _busy = false;
+    }
+
+    private async Task SaveSettingAsync(SystemSettingAdminModel setting)
+    {
+        _busy = true; _error = null; _success = null;
+        var result = await AdminApi.UpdateSystemSettingAsync(setting.Id, new UpdateSystemSettingModel { SettingValue = _settingValues[setting.Id] });
+        if (!result.Success) _error = result.Error; else { _success = $"Setting '{setting.SettingKey}' saved."; await LoadAllAsync(); }
+        _busy = false;
+    }
+}

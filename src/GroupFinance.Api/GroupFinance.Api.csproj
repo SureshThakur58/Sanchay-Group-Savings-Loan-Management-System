@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>GroupFinance.Api</RootNamespace>
+    <AssemblyName>GroupFinance.Api</AssemblyName>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="10.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.2" />
+    <PackageReference Include="NepDate" Version="2.0.7" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\GroupFinance.Core\GroupFinance.Core.csproj" />
+    <ProjectReference Include="..\GroupFinance.Infrastructure\GroupFinance.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

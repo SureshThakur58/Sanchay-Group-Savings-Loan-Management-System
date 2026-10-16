@@ -1,0 +1,257 @@
+@attribute [Authorize]
+@page "/transactions"
+@inject GroupApiClient GroupApi
+@inject MemberApiClient MemberApi
+@inject LedgerApiClient LedgerApi
+@inject GroupFundApiClient FundApi
+
+<PageTitle>Ledger & Financial Views</PageTitle>
+
+<div class="ledger-page">
+    <div class="page-heading">
+        <div>
+            <h1>Ledger & Financial Views</h1>
+            <p class="page-description">Review posted group and member ledger movements and the trial balance generated from the central financial transaction journal.</p>
+            <p><a href="/audit-log">Open Audit Trail & Reversal</a></p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error)) { <div class="alert error">@_error</div> }
+    @if (_loading) { <p>Loading...</p> }
+    else if (_group is null) { <p>No active group is configured.</p> }
+    else
+    {
+        <section class="setup-card">
+            <div class="ledger-tabs">
+                <button class="@TabClassGroup" @onclick="SelectGroupTab">Group Ledger</button>
+                <button class="@TabClassMember" @onclick="SelectMemberTab">Member Ledger</button>
+                <button class="@TabClassTrial" @onclick="SelectTrialTab">Trial Balance</button>
+            </div>
+
+            @if (_tab == "group")
+            {
+                <div class="form-grid">
+                    <div class="form-field"><label>From Date</label><NepaliNullableDateInput @bind-Value="_fromDate" /></div>
+                    <div class="form-field"><label>To Date</label><NepaliNullableDateInput @bind-Value="_toDate" /></div>
+                    <div class="form-field">
+                        <label>Financial Account (optional)</label>
+                        <select @bind="_selectedAccountId">
+                            <option value="">All accounts</option>
+                            @foreach (var account in _accounts)
+                            {
+                                <option value="@account.Id">@account.AccountCode - @account.AccountName</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+                <button class="primary-button" @onclick="LoadGroupLedgerAsync">Load Group Ledger</button>
+                @if (_groupRows.Count > 0)
+                {
+                    <p class="muted">@_groupRows.Count posted ledger entries shown (maximum 2,000).</p>
+                    <div class="table-wrap">
+                        <table class="data-table">
+                            <thead><tr><th>Date</th><th>Transaction</th><th>Type</th><th>Account</th><th>Member</th><th>Debit</th><th>Credit</th><th>Running Balance</th><th>Receipt</th></tr></thead>
+                            <tbody>
+                            @foreach (var row in _groupRows)
+                            {
+                                <tr>
+                                    <td>@row.TransactionDate.ToNepaliDateString()</td>
+                                    <td><strong>@row.TransactionNumber</strong><br /><span class="muted">@row.Description</span></td>
+                                    <td>@row.TransactionType</td>
+                                    <td>@row.AccountCode<br /><span class="muted">@row.AccountName</span></td>
+                                    <td>@(row.MemberName ?? "-")</td>
+                                    <td>NPR @row.DebitAmount.ToString("N2")</td>
+                                    <td>NPR @row.CreditAmount.ToString("N2")</td>
+                                    <td>NPR @row.RunningBalance.ToString("N2")</td>
+                                    <td>
+                                        @if (HasReceipt(row.TransactionType))
+                                        {
+                                            <a href="@($"/receipts/{row.FinancialTransactionId}")">View</a>
+                                        }
+                                        else
+                                        {
+                                            <span class="muted">-</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else { <p class="muted">No posted ledger entries match the selected filters.</p> }
+            }
+            else if (_tab == "member")
+            {
+                <div class="form-grid">
+                    <div class="form-field">
+                        <label>Member</label>
+                        <select @bind="_selectedMemberId">
+                            <option value="0">Select member</option>
+                            @foreach (var member in _members)
+                            {
+                                <option value="@member.Id">@member.MemberNumber - @member.FullName</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="form-field"><label>From Date</label><NepaliNullableDateInput @bind-Value="_fromDate" /></div>
+                    <div class="form-field"><label>To Date</label><NepaliNullableDateInput @bind-Value="_toDate" /></div>
+                </div>
+                <button class="primary-button" disabled="@(_selectedMemberId <= 0)" @onclick="LoadMemberLedgerAsync">Load Member Ledger</button>
+                @if (_selectedMemberId > 0 && _memberRows.Count > 0)
+                {
+                    <p class="muted">@_memberRows.Count posted ledger entries shown (maximum 2,000).</p>
+                    <div class="table-wrap">
+                        <table class="data-table">
+                            <thead><tr><th>Date</th><th>Transaction</th><th>Type</th><th>Account</th><th>Debit</th><th>Credit</th><th>Running Balance</th><th>Receipt</th></tr></thead>
+                            <tbody>
+                            @foreach (var row in _memberRows)
+                            {
+                                <tr>
+                                    <td>@row.TransactionDate.ToNepaliDateString()</td>
+                                    <td><strong>@row.TransactionNumber</strong><br /><span class="muted">@row.Description</span></td>
+                                    <td>@row.TransactionType</td>
+                                    <td>@row.AccountCode<br /><span class="muted">@row.AccountName</span></td>
+                                    <td>NPR @row.DebitAmount.ToString("N2")</td>
+                                    <td>NPR @row.CreditAmount.ToString("N2")</td>
+                                    <td>NPR @row.RunningBalance.ToString("N2")</td>
+                                    <td>
+                                        @if (HasReceipt(row.TransactionType))
+                                        {
+                                            <a href="@($"/receipts/{row.FinancialTransactionId}")">View</a>
+                                        }
+                                        else
+                                        {
+                                            <span class="muted">-</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else if (_selectedMemberId > 0) { <p class="muted">No posted ledger entries match the selected member and dates.</p> }
+            }
+            else
+            {
+                <div class="form-grid">
+                    <div class="form-field"><label>As of Date</label><NepaliDateInput @bind-Value="_asOfDate" /></div>
+                </div>
+                <button class="primary-button" @onclick="LoadTrialBalanceAsync">Load Trial Balance</button>
+                @if (_trialBalance is not null)
+                {
+                    <div class="summary-grid ledger-summary">
+                        <div><span>Total Debit Balance</span><strong>NPR @_trialBalance.TotalDebit.ToString("N2")</strong></div>
+                        <div><span>Total Credit Balance</span><strong>NPR @_trialBalance.TotalCredit.ToString("N2")</strong></div>
+                    </div>
+                    <div class="table-wrap">
+                        <table class="data-table">
+                            <thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Total Debit</th><th>Total Credit</th><th>Debit Balance</th><th>Credit Balance</th></tr></thead>
+                            <tbody>
+                            @foreach (var row in _trialBalance.Accounts)
+                            {
+                                <tr>
+                                    <td>@row.AccountCode</td><td>@row.AccountName</td><td>@row.AccountType</td>
+                                    <td>NPR @row.TotalDebit.ToString("N2")</td><td>NPR @row.TotalCredit.ToString("N2")</td>
+                                    <td>NPR @row.DebitBalance.ToString("N2")</td><td>NPR @row.CreditBalance.ToString("N2")</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            }
+        </section>
+    }
+</div>
+
+@code {
+    private GroupModel? _group;
+    private List<MemberModel> _members = [];
+    private List<GroupFundAccountModel> _accounts = [];
+    private List<LedgerEntryModel> _groupRows = [];
+    private List<LedgerEntryModel> _memberRows = [];
+    private TrialBalanceModel? _trialBalance;
+    private string _tab = "group";
+    private long _selectedMemberId;
+    private long? _selectedAccountId;
+    private DateTime? _fromDate;
+    private DateTime? _toDate;
+    private DateTime _asOfDate = DateTime.Today;
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var groups = await GroupApi.GetGroupsAsync();
+        if (!groups.Success || groups.Groups is null || groups.Groups.Count == 0)
+        {
+            _error = groups.Error ?? "Unable to load the active group.";
+            _loading = false;
+            return;
+        }
+
+        _group = groups.Groups[0];
+        var members = await MemberApi.GetMembersAsync(_group.Id, true);
+        if (members.Success && members.Members is not null)
+            _members = members.Members.ToList();
+
+        var accounts = await FundApi.GetAccountsAsync(_group.Id);
+        if (accounts.Success && accounts.Data is not null)
+            _accounts = accounts.Data.ToList();
+
+        _loading = false;
+        await LoadGroupLedgerAsync();
+    }
+
+    private string TabClass(string tab) => _tab == tab ? "ledger-tab active" : "ledger-tab";
+    private string TabClassGroup => TabClass("group");
+    private string TabClassMember => TabClass("member");
+    private string TabClassTrial => TabClass("trial");
+
+    private Task SelectGroupTab() => SelectTab("group");
+    private Task SelectMemberTab() => SelectTab("member");
+    private Task SelectTrialTab() => SelectTab("trial");
+
+    private async Task SelectTab(string tab)
+    {
+        _tab = tab;
+        _error = null;
+        if (tab == "group") await LoadGroupLedgerAsync();
+        else if (tab == "trial") await LoadTrialBalanceAsync();
+    }
+
+    private static bool HasReceipt(string transactionType) => transactionType.Trim().ToUpperInvariant() switch
+    {
+        "CONTRIBUTION" or "LOAN_DISBURSEMENT" or "LOAN_REPAYMENT" or "EXPENSE" or "ASSET_PURCHASE" or "INTEREST_DISTRIBUTION" => true,
+        _ => false
+    };
+
+    private async Task LoadGroupLedgerAsync()
+    {
+        if (_group is null) return;
+        _error = null;
+        var result = await LedgerApi.GetGroupLedgerAsync(_group.Id, _fromDate, _toDate, _selectedAccountId);
+        if (!result.Success) { _error = result.Error; return; }
+        _groupRows = result.Data?.ToList() ?? [];
+    }
+
+    private async Task LoadMemberLedgerAsync()
+    {
+        if (_group is null || _selectedMemberId <= 0) return;
+        _error = null;
+        var result = await LedgerApi.GetMemberLedgerAsync(_group.Id, _selectedMemberId, _fromDate, _toDate);
+        if (!result.Success) { _error = result.Error; return; }
+        _memberRows = result.Data?.ToList() ?? [];
+    }
+
+    private async Task LoadTrialBalanceAsync()
+    {
+        if (_group is null) return;
+        _error = null;
+        var result = await LedgerApi.GetTrialBalanceAsync(_group.Id, _asOfDate);
+        if (!result.Success) { _error = result.Error; return; }
+        _trialBalance = result.Data;
+    }
+}

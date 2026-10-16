@@ -1,0 +1,223 @@
+@using NepDate
+
+<div class="nepali-date-picker">
+    <div class="nepali-date-control">
+        <input type="text"
+               class="date-input"
+               value="@_text"
+               @onchange="OnTextChanged"
+               placeholder="YYYY/MM/DD (B.S.)"
+               disabled="@Disabled"
+               aria-label="Nepali date" />
+        <button type="button"
+                class="date-picker-button"
+                @onclick="ToggleCalendar"
+                disabled="@Disabled"
+                aria-label="Open Nepali date picker"
+                title="Select Nepali B.S. date">▣</button>
+    </div>
+
+    @if (_calendarOpen && !Disabled)
+    {
+        <div class="nepali-calendar" role="dialog" aria-label="Nepali calendar">
+            <div class="nepali-calendar-header">
+                <button type="button" class="calendar-nav" @onclick="() => MoveMonth(-1)" aria-label="Previous Nepali month">‹</button>
+                <div class="calendar-title">
+                    <strong>@_viewBsYear @(_viewMonthName)</strong>
+                    <small>B.S.</small>
+                </div>
+                <button type="button" class="calendar-nav" @onclick="() => MoveMonth(1)" aria-label="Next Nepali month">›</button>
+            </div>
+
+            <div class="calendar-weekdays">
+                @foreach (var dayName in Weekdays)
+                {
+                    <span>@dayName</span>
+                }
+            </div>
+
+            <div class="calendar-days">
+                @foreach (var cell in CalendarCells)
+                {
+                    @if (cell is null)
+                    {
+                        <span class="calendar-day calendar-empty"></span>
+                    }
+                    else
+                    {
+                        <button type="button"
+                                class="@GetDayClass(cell.Value)"
+                                @onclick="() => SelectDate(cell.Value)"
+                                title="@GetDayTitle(cell.Value)">
+                            @GetBsDay(cell.Value)
+                        </button>
+                    }
+                }
+            </div>
+
+            <div class="calendar-footer">
+                <button type="button" class="calendar-today-button" @onclick="SelectToday">Today</button>
+                <button type="button" class="calendar-close-button" @onclick="ClearDate">Clear</button>
+                <button type="button" class="calendar-close-button" @onclick="CloseCalendar">Close</button>
+            </div>
+        </div>
+    }
+
+    <small class="date-hint">B.S. date · YYYY/MM/DD</small>
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <small class="date-error">@_error</small>
+    }
+</div>
+
+@code {
+    [Parameter] public DateTime? Value { get; set; }
+    [Parameter] public EventCallback<DateTime?> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private string _text = string.Empty;
+    private string? _error;
+    private bool _calendarOpen;
+    private DateTime _viewDate;
+    private int _viewBsYear;
+    private int _viewBsMonth;
+    private string _viewMonthName = string.Empty;
+
+    private static readonly string[] Weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+    private IEnumerable<DateTime?> CalendarCells
+    {
+        get
+        {
+            var start = GetBsMonthStart(_viewDate);
+            var leading = (int)start.DayOfWeek;
+            var days = GetDaysInBsMonth(start);
+            for (var i = 0; i < leading; i++) yield return null;
+            for (var i = 0; i < days; i++) yield return start.AddDays(i);
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (string.IsNullOrWhiteSpace(_error))
+            _text = Value.HasValue ? FormatBs(Value.Value) : string.Empty;
+
+        if (_viewDate == default || !_calendarOpen)
+            SetViewMonth(Value ?? DateTime.Today);
+    }
+
+    private static string FormatBs(DateTime date) => new NepaliDate(date).ToString("yyyy/MM/dd");
+
+    private void SetViewMonth(DateTime date)
+    {
+        _viewDate = GetBsMonthStart(date);
+        var bs = new NepaliDate(_viewDate);
+        _viewBsYear = bs.Year;
+        _viewBsMonth = bs.Month;
+        _viewMonthName = bs.MonthName.ToString();
+    }
+
+    private static DateTime GetBsMonthStart(DateTime date)
+    {
+        var current = date.Date;
+        var bs = new NepaliDate(current);
+        for (var i = 0; i < 35; i++)
+        {
+            if (bs.Day == 1) return current;
+            current = current.AddDays(-1);
+            bs = new NepaliDate(current);
+        }
+        throw new InvalidOperationException("Unable to determine the start of the Nepali month.");
+    }
+
+    private static int GetDaysInBsMonth(DateTime monthStart)
+    {
+        var bs = new NepaliDate(monthStart);
+        var current = monthStart;
+        for (var i = 1; i <= 32; i++)
+        {
+            var next = current.AddDays(1);
+            var nextBs = new NepaliDate(next);
+            if (nextBs.Year != bs.Year || nextBs.Month != bs.Month)
+                return i;
+            current = next;
+        }
+        return 32;
+    }
+
+    private int GetBsDay(DateTime date) => new NepaliDate(date).Day;
+
+    private string GetDayClass(DateTime date)
+    {
+        var selected = Value.HasValue && date.Date == Value.Value.Date;
+        var today = date.Date == DateTime.Today;
+        if (selected && today) return "calendar-day selected today";
+        if (selected) return "calendar-day selected";
+        if (today) return "calendar-day today";
+        return "calendar-day";
+    }
+
+    private string GetDayTitle(DateTime date) => $"{FormatBs(date)} B.S.";
+
+    private void ToggleCalendar()
+    {
+        if (Disabled) return;
+        if (!_calendarOpen) SetViewMonth(Value ?? DateTime.Today);
+        _calendarOpen = !_calendarOpen;
+    }
+
+    private void CloseCalendar() => _calendarOpen = false;
+
+    private void MoveMonth(int direction)
+    {
+        var currentStart = GetBsMonthStart(_viewDate);
+        DateTime candidate;
+
+        if (direction < 0)
+        {
+            candidate = currentStart.AddDays(-1);
+            candidate = GetBsMonthStart(candidate);
+        }
+        else
+        {
+            var days = GetDaysInBsMonth(currentStart);
+            candidate = GetBsMonthStart(currentStart.AddDays(days + 1));
+        }
+
+        SetViewMonth(candidate);
+    }
+
+    private async Task SelectDate(DateTime date)
+    {
+        _error = null;
+        _text = FormatBs(date);
+        _calendarOpen = false;
+        await ValueChanged.InvokeAsync(date.Date);
+    }
+
+    private async Task SelectToday() => await SelectDate(DateTime.Today);
+
+    private async Task ClearDate()
+    {
+        _error = null;
+        _text = string.Empty;
+        _calendarOpen = false;
+        await ValueChanged.InvokeAsync(null);
+    }
+
+    private async Task OnTextChanged(ChangeEventArgs e)
+    {
+        var text = e.Value?.ToString()?.Trim() ?? string.Empty;
+        if (!NepaliDate.TryParse(text, out var parsed))
+        {
+            _error = "Invalid Nepali date.";
+            _text = text;
+            return;
+        }
+
+        _error = null;
+        _text = FormatBs(parsed.EnglishDate);
+        SetViewMonth(parsed.EnglishDate);
+        await ValueChanged.InvokeAsync(parsed.EnglishDate.Date);
+    }
+}

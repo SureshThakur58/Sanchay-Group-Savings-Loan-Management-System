@@ -1,0 +1,22 @@
+<section class="setup-card report-sheet">
+    <ReportHeader Title="@Title" GroupName="@GroupName" AsOfDate="@AsOfDate" />
+    <div class="table-wrap">
+        <table class="data-table">
+            <thead><tr>
+                @foreach (var header in Headers.Split('|', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    <th>@header</th>
+                }
+            </tr></thead>
+            <tbody>@ChildContent</tbody>
+        </table>
+    </div>
+</section>
+
+@code {
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public string GroupName { get; set; } = string.Empty;
+    [Parameter] public DateTime AsOfDate { get; set; }
+    [Parameter] public string Headers { get; set; } = string.Empty;
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

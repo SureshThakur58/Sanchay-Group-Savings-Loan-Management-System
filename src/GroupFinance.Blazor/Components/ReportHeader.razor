@@ -1,0 +1,11 @@
+<div class="report-header">
+    <h2>@Title</h2>
+    <p>Group: @GroupName</p>
+    <p class="muted">Generated for @AsOfDate.ToNepaliDateString()</p>
+</div>
+
+@code {
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public string GroupName { get; set; } = string.Empty;
+    [Parameter] public DateTime AsOfDate { get; set; }
+}

@@ -1,0 +1,149 @@
+@page "/contributions"
+@attribute [Authorize]
+@inject GroupApiClient Groups
+@inject ContributionApiClient ContributionApi
+@inject MemberApiClient MemberApi
+@inject AuthenticationStateProvider AuthenticationState
+
+<PageTitle>Contributions</PageTitle>
+
+<div class="contributions-page">
+    <div class="page-heading">
+        <div><h1>Contributions</h1><p class="page-description">Set up periodic contributions, generate member schedules and record collections.</p></div>
+    </div>
+
+    @if (_loading)
+    {
+        <section class="setup-card"><p>Loading contributions...</p></section>
+    }
+    else if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="alert error">@_error</div>
+    }
+    else if (!_groupId.HasValue)
+    {
+        <div class="alert warning">Configure the single group before managing contributions.</div>
+    }
+    else
+    {
+        <section class="setup-card">
+            <div class="section-heading"><div><h2>Contribution Plans</h2><span class="muted">Group: @_groupName</span></div></div>
+            @if (_canManage)
+            {
+                <div class="form-grid">
+                    <div class="form-field"><label>Plan Name</label><InputText @bind-Value="_plan.Name" /></div>
+                    <div class="form-field"><label>Amount</label><InputNumber @bind-Value="_plan.Amount" /></div>
+                    <div class="form-field"><label>Frequency</label><InputSelect @bind-Value="_plan.Frequency"><option>Monthly</option><option>Quarterly</option><option>Half-Yearly</option><option>Yearly</option><option>Custom</option></InputSelect></div>
+                    <div class="form-field"><label>Custom Interval (months)</label><InputNumber @bind-Value="_plan.IntervalMonths" /></div>
+                    <div class="form-field"><label>Due Day</label><InputNumber @bind-Value="_plan.DueDay" /></div>
+                    <div class="form-field"><label>Late Fee %</label><InputNumber @bind-Value="_plan.LateFeeRate" /></div>
+                </div>
+                <button class="primary-button" @onclick="SavePlanAsync">@(_editingPlanId.HasValue ? "Save Plan" : "Create Plan")</button>
+                @if (_editingPlanId.HasValue) { <button class="secondary-button" @onclick="ResetPlan">Cancel</button> }
+            }
+            <div class="table-wrapper">
+                <table class="data-table"><thead><tr><th>Name</th><th>Amount</th><th>Frequency</th><th>Due Day</th><th>Late Fee</th><th>Status</th><th></th></tr></thead>
+                    <tbody>@foreach (var plan in _plans)
+                    { <tr><td>@plan.Name</td><td>NPR @plan.Amount.ToString("N2")</td><td>@plan.Frequency</td><td>@plan.DueDay</td><td>@plan.LateFeeRate.ToString("0.####")%</td><td><span class="badge @(plan.IsActive ? "active" : "inactive")">@(plan.IsActive ? "Active" : "Inactive")</span></td><td>@if (_canManage) { <button class="link-button" @onclick="() => EditPlan(plan)">Edit</button> }</td></tr> }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="setup-card">
+            <div class="section-heading"><div><h2>Generate Collection Schedule</h2><span class="muted">Schedules use member contribution overrides when configured.</span></div></div>
+            <div class="form-grid">
+                <div class="form-field"><label>Plan</label><InputSelect @bind-Value="_generationPlanId"><option value="0">Select plan</option>@foreach (var plan in _plans) { <option value="@plan.Id">@plan.Name - NPR @plan.Amount.ToString("N2")</option> }</InputSelect></div>
+                <div class="form-field"><label>From Date</label><NepaliDateInput @bind-Value="_fromDate" /></div>
+                <div class="form-field"><label>To Date</label><NepaliDateInput @bind-Value="_toDate" /></div>
+            </div>
+            @if (_canManage) { <button class="primary-button" @onclick="GenerateAsync">Generate Schedules</button> }
+        </section>
+
+        <section class="setup-card">
+            <div class="section-heading"><div><h2>Collection Schedules</h2><span class="muted">Due, partial, overdue and paid contributions.</span></div></div>
+            <div class="form-grid">
+                <div class="form-field"><label>Member</label><InputSelect @bind-Value="_memberFilter"><option value="0">All members</option>@foreach (var member in _members) { <option value="@member.Id">@member.MemberNumber - @member.FullName</option> }</InputSelect></div>
+                <div class="form-field"><label>Status</label><InputSelect @bind-Value="_statusFilter"><option value="">All</option><option>Due</option><option>Partial</option><option>Overdue</option><option>Paid</option></InputSelect></div>
+            </div>
+            <button class="secondary-button" @onclick="LoadSchedulesAsync">Refresh</button>
+            <div class="table-wrapper"><table class="data-table"><thead><tr><th>Member</th><th>Period</th><th>Due Date</th><th>Required</th><th>Paid</th><th>Late Fee</th><th>Outstanding</th><th>Status</th><th></th></tr></thead><tbody>
+                @foreach (var schedule in _schedules)
+                { <tr><td>@schedule.MemberNumber<br /><span class="muted">@schedule.MemberName</span></td><td>@schedule.PeriodStart.ToNepaliDateString() - @schedule.PeriodEnd.ToNepaliDateString()</td><td>@schedule.DueDate.ToNepaliDateString()</td><td>NPR @schedule.DueAmount.ToString("N2")</td><td>NPR @schedule.PaidAmount.ToString("N2")</td><td>NPR @schedule.LateFeeAmount.ToString("N2")</td><td>NPR @schedule.OutstandingAmount.ToString("N2")</td><td><span class="badge">@schedule.Status</span></td><td><button class="link-button" @onclick="() => SelectSchedule(schedule)">View / Collect</button></td></tr> }
+            </tbody></table></div>
+        </section>
+
+        @if (_selectedSchedule is { } selectedSchedule)
+        {
+            <section class="setup-card">
+                <div class="section-heading"><div><h2>Collection</h2><span class="muted">@selectedSchedule.MemberNumber - @selectedSchedule.MemberName</span></div><button class="secondary-button" @onclick="ClearSelection">Close</button></div>
+                <div class="summary-grid"><div><span>Required</span><strong>NPR @selectedSchedule.DueAmount.ToString("N2")</strong></div><div><span>Paid</span><strong>NPR @selectedSchedule.PaidAmount.ToString("N2")</strong></div><div><span>Late Fee</span><strong>NPR @selectedSchedule.LateFeeAmount.ToString("N2")</strong></div><div><span>Outstanding</span><strong>NPR @selectedSchedule.OutstandingAmount.ToString("N2")</strong></div></div>
+                @if (_canManage && selectedSchedule.OutstandingAmount > 0)
+                {
+                    <div class="form-grid">
+                        <div class="form-field"><label>Payment Date</label><NepaliDateInput @bind-Value="_payment.TransactionDate" /></div>
+                        <div class="form-field"><label>Amount</label><InputNumber @bind-Value="_payment.Amount" /></div>
+                        <div class="form-field"><label>Payment Method</label><InputSelect @bind-Value="_payment.PaymentMethod"><option>Cash</option><option>Bank</option><option>Online Transfer</option><option>Other</option></InputSelect></div>
+                        <div class="form-field"><label>Financial Account</label><InputSelect @bind-Value="_payment.FinancialAccountId"><option value="0">Select account</option>@foreach (var account in _accounts) { <option value="@account.Id">@account.AccountCode - @account.AccountName</option> }</InputSelect></div>
+                        <div class="form-field"><label>Reference Number</label><InputText @bind-Value="_payment.ReferenceNumber" /></div>
+                        <div class="form-field full"><label>Description</label><InputText @bind-Value="_payment.Description" /></div>
+                    </div>
+                    <button class="primary-button" @onclick="RecordPaymentAsync">Record Payment</button>
+                    @if (selectedSchedule.LateFeeAmount > selectedSchedule.WaivedLateFeeAmount) { <button class="secondary-button" @onclick="WaiveFeeAsync">Waive Late Fee</button> }
+                }
+                <h3>Payment History</h3>
+                <div class="table-wrapper"><table class="data-table"><thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Financial Transaction</th></tr></thead><tbody>@foreach (var payment in selectedSchedule.Payments) { <tr><td>@payment.TransactionDate.ToNepaliDateString()</td><td>NPR @payment.Amount.ToString("N2")</td><td>@payment.PaymentMethod</td><td>@payment.ReferenceNumber</td><td>@payment.FinancialTransactionId</td></tr>}</tbody></table></div>
+            </section>
+        }
+    }
+</div>
+
+@if (!string.IsNullOrWhiteSpace(_message)) { <div class="alert success">@_message</div> }
+
+@code {
+    private long? _groupId;
+    private string? _groupName;
+    private bool _loading = true, _canManage;
+    private string? _error, _message;
+    private List<ContributionPlanModel> _plans = [];
+    private List<MemberModel> _members = [];
+    private List<ContributionScheduleModel> _schedules = [];
+    private List<FinancialAccountModel> _accounts = [];
+    private long? _editingPlanId;
+    private ContributionPlanForm _plan = new();
+    private long _generationPlanId;
+    private DateTime _fromDate = DateTime.Today;
+    private DateTime _toDate = DateTime.Today.AddMonths(3);
+    private long _memberFilter;
+    private string _statusFilter = "";
+    private ContributionScheduleModel? _selectedSchedule;
+    private PaymentForm _payment = new() { TransactionDate = DateTime.Today, PaymentMethod = "Cash" };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthenticationState.GetAuthenticationStateAsync();
+        _canManage = state.User.HasClaim("permission", "Contributions.Manage");
+        var groups = await Groups.GetGroupsAsync();
+        if (!groups.Success) { _error = groups.Error; _loading = false; return; }
+        var group = groups.Groups?.SingleOrDefault();
+        _groupId = group?.Id; _groupName = group?.Name;
+        if (_groupId.HasValue) { await LoadPlansAsync(); await LoadMembersAsync(); await LoadAccountsAsync(); await LoadSchedulesAsync(); }
+        _loading = false;
+    }
+
+    private async Task LoadPlansAsync() { if (!_groupId.HasValue) return; var r = await ContributionApi.GetPlansAsync(_groupId.Value); if (!r.Success) _error = r.Error; else _plans = r.Data?.ToList() ?? []; }
+    private async Task LoadMembersAsync() { if (!_groupId.HasValue) return; var r = await MemberApi.GetMembersAsync(_groupId.Value, false); if (r.Success) _members = r.Members?.ToList() ?? []; }
+    private async Task LoadAccountsAsync() { if (!_groupId.HasValue) return; var r = await ContributionApi.GetAccountsAsync(_groupId.Value); if (r.Success) _accounts = r.Data?.Where(x => x.IsActive).ToList() ?? []; }
+    private async Task LoadSchedulesAsync() { if (!_groupId.HasValue) return; var r = await ContributionApi.GetSchedulesAsync(_groupId.Value, _memberFilter == 0 ? null : _memberFilter, null, null, null, string.IsNullOrWhiteSpace(_statusFilter) ? null : _statusFilter); if (!r.Success) _error = r.Error; else _schedules = r.Data?.ToList() ?? []; }
+    private void EditPlan(ContributionPlanModel p) { _editingPlanId = p.Id; _plan = new() { Name = p.Name, Amount = p.Amount, Frequency = p.Frequency, IntervalMonths = p.IntervalMonths, DueDay = p.DueDay, LateFeeRate = p.LateFeeRate, IsActive = p.IsActive }; }
+    private void ResetPlan() { _editingPlanId = null; _plan = new(); }
+    private async Task SavePlanAsync() { if (!_groupId.HasValue) return; _error = null; _message = null; if (_editingPlanId.HasValue) { var r = await ContributionApi.UpdatePlanAsync(_editingPlanId.Value, new(_plan.Name, _plan.Amount, _plan.Frequency, _plan.IntervalMonths, _plan.DueDay, _plan.LateFeeRate, _plan.IsActive)); if (!r.Success) _error = r.Error; else { _message = "Contribution plan updated."; ResetPlan(); await LoadPlansAsync(); } } else { var r = await ContributionApi.CreatePlanAsync(new(_groupId.Value, _plan.Name, _plan.Amount, _plan.Frequency, _plan.IntervalMonths, _plan.DueDay, _plan.LateFeeRate, _plan.IsActive)); if (!r.Success) _error = r.Error; else { _message = "Contribution plan created."; ResetPlan(); await LoadPlansAsync(); } } }
+    private async Task GenerateAsync() { if (_generationPlanId <= 0) { _error = "Select a contribution plan."; return; } var r = await ContributionApi.GenerateSchedulesAsync(new(_generationPlanId, _fromDate, _toDate)); if (!r.Success) _error = r.Error; else { _message = $"Schedules generated: {r.Data?.SchedulesCreated ?? 0}; existing: {r.Data?.SchedulesAlreadyExisting ?? 0}."; await LoadSchedulesAsync(); } }
+    private void SelectSchedule(ContributionScheduleModel s) { _selectedSchedule = s; _payment = new PaymentForm { TransactionDate = DateTime.Today, PaymentMethod = "Cash", Amount = Math.Min(10000m, s.OutstandingAmount) }; }
+    private void ClearSelection() => _selectedSchedule = null;
+    private async Task RecordPaymentAsync() { if (_selectedSchedule is null) return; var r = await ContributionApi.RecordPaymentAsync(_selectedSchedule.Id, new(_payment.TransactionDate, _payment.Amount, _payment.PaymentMethod, _payment.FinancialAccountId, _payment.ReferenceNumber, _payment.Description)); if (!r.Success) _error = r.Error; else { _message = "Contribution payment posted successfully."; var s = await ContributionApi.GetScheduleAsync(_selectedSchedule.Id); if (s.Success) _selectedSchedule = s.Data; await LoadSchedulesAsync(); await LoadAccountsAsync(); } }
+    private async Task WaiveFeeAsync() { if (_selectedSchedule is null) return; var r = await ContributionApi.WaiveLateFeeAsync(_selectedSchedule.Id, new(null, "Late fee waiver")); if (!r.Success) _error = r.Error; else { _message = "Late fee waived."; _selectedSchedule = r.Data; await LoadSchedulesAsync(); } }
+
+    private sealed class ContributionPlanForm { public string Name { get; set; } = "Quarterly Contribution"; public decimal Amount { get; set; } = 5000m; public string Frequency { get; set; } = "Quarterly"; public int IntervalMonths { get; set; } = 3; public int DueDay { get; set; } = 15; public decimal LateFeeRate { get; set; } = 1m; public bool IsActive { get; set; } = true; }
+    private sealed class PaymentForm { public DateTime TransactionDate { get; set; } public decimal Amount { get; set; } public string PaymentMethod { get; set; } = "Cash"; public long FinancialAccountId { get; set; } public string? ReferenceNumber { get; set; } public string? Description { get; set; } }
+}

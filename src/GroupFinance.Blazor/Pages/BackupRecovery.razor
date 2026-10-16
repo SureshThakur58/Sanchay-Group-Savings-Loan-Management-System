@@ -1,0 +1,402 @@
+@page "/backup-recovery"
+@attribute [Authorize(Roles = "SuperAdministrator")]
+@inject AdministrationApiClient AdminApi
+
+<PageTitle>Backup & Recovery</PageTitle>
+
+<div class="admin-page">
+    <div class="page-heading">
+        <div>
+            <h1>Backup &amp; Recovery</h1>
+            <p class="page-description">Create, schedule, verify and safely restore database backups. Restore drills always use an isolated recovery database.</p>
+        </div>
+        <button class="secondary-button" @onclick="LoadAsync" disabled="@_busy">Refresh</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="alert error">@_error</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(_success))
+    {
+        <div class="alert success">@_success</div>
+    }
+
+    @if (_loading)
+    {
+        <section class="setup-card"><p>Loading backup configuration...</p></section>
+    }
+    else if (_config is not null)
+    {
+        <section class="setup-card">
+            <div class="section-heading">
+                <div>
+                    <h2>Database Backup</h2>
+                    <p class="muted">Manual backups are full SQL Server backups and are verified immediately with RESTORE VERIFYONLY.</p>
+                </div>
+                <span class="badge @(_config.Enabled ? "active" : "inactive")">@(_config.Enabled ? "Enabled" : "Disabled")</span>
+            </div>
+
+            <div class="backup-summary-grid">
+                <div><span class="muted">Backup location</span><strong>@_config.BackupDirectory</strong></div>
+                <div><span class="muted">Retention</span><strong>@_config.RetentionDays days</strong></div>
+                <div><span class="muted">Schedule time zone</span><strong>@_config.TimeZoneId</strong></div>
+                <div><span class="muted">Recovery target</span><strong>@_config.RecoveryDatabaseName</strong></div>
+            </div>
+
+            <div class="button-row">
+                <button type="button" class="primary-button" @onclick="CreateBackupAsync" disabled="@(!_config.Enabled)">Create Full Backup</button>
+                <button class="secondary-button" @onclick="ApplyRetentionAsync" disabled="@_busy || !_config.Enabled">Apply Retention</button>
+            </div>
+        </section>
+
+        <section class="setup-card">
+            <div class="section-heading">
+                <div><h2>Backup Files</h2><p class="muted">Only backup files in the configured server-side backup directory are shown.</p></div>
+            </div>
+            @if (_backups.Count == 0)
+            {
+                <p class="muted">No backup files have been created yet.</p>
+            }
+            else
+            {
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead><tr><th>Backup</th><th>Created</th><th>Size</th><th>Verification</th><th>Actions</th></tr></thead>
+                        <tbody>
+                            @foreach (var backup in _backups)
+                            {
+                                <tr>
+                                    <td><strong>@backup.FileName</strong></td>
+                                    <td>@backup.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                    <td>@FormatBytes(backup.SizeBytes)</td>
+                                    <td><span class="badge @(backup.Verified ? "active" : "inactive")">@(backup.Verified ? "Verified" : "Not verified")</span></td>
+                                    <td>
+                                        <button class="link-button" @onclick="() => VerifyAsync(backup.FileName)" disabled="@_busy">Verify</button>
+                                        @if (_config.AllowRestoreDrill)
+                                        {
+                                            <button class="link-button danger-link" @onclick="() => BeginRestore(backup.FileName)" disabled="@_busy">Restore Drill</button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+
+        <section class="setup-card">
+            <div class="section-heading">
+                <div><h2>Scheduled Backups</h2><p class="muted">The API scheduler checks every minute and executes enabled schedules using the configured server time zone.</p></div>
+            </div>
+
+            <div class="backup-schedule-form">
+                <div class="form-grid">
+                    <div class="form-field"><label>Name</label><InputText @bind-Value="_schedule.Name" /></div>
+                    <div class="form-field">
+                        <label>Frequency</label>
+                        <select @bind="_schedule.Frequency">
+                            <option value="Daily">Every day</option>
+                            <option value="Weekly">Every week</option>
+                            <option value="Monthly">Every month</option>
+                        </select>
+                    </div>
+                    <div class="form-field">
+                        <label>Time</label>
+                        <input class="text-input" type="text" inputmode="numeric" maxlength="5"
+                               placeholder="HH:mm" value="@_schedule.TimeText" @oninput="OnScheduleTimeChanged"
+                               aria-label="Backup time in 24-hour HH:mm format" />
+                        <small class="muted">Enter time in 24-hour HH:mm format, for example 16:30.</small>
+                    </div>
+                    @if (_schedule.Frequency == "Weekly")
+                    {
+                        <div class="form-field">
+                            <label>Day of week</label>
+                            <select @bind="_schedule.DayOfWeek">
+                                <option value="0">Sunday</option>
+                                <option value="1">Monday</option>
+                                <option value="2">Tuesday</option>
+                                <option value="3">Wednesday</option>
+                                <option value="4">Thursday</option>
+                                <option value="5">Friday</option>
+                                <option value="6">Saturday</option>
+                            </select>
+                        </div>
+                    }
+                    @if (_schedule.Frequency == "Monthly")
+                    {
+                        <div class="form-field"><label>Day of month</label><input class="text-input" type="number" min="1" max="31" @bind="_schedule.DayOfMonth" /></div>
+                    }
+                    <div class="form-field checkbox-field"><label><InputCheckbox @bind-Value="_schedule.Enabled" /> Enabled</label></div>
+                </div>
+                <button class="primary-button" @onclick="SaveScheduleAsync" disabled="@_busy">@( _editingSchedule is null ? "Add Schedule" : "Save Schedule")</button>
+                @if (_editingSchedule is not null)
+                {
+                    <button class="secondary-button" @onclick="CancelScheduleEdit" disabled="@_busy">Cancel</button>
+                }
+            </div>
+
+            @if (_schedules.Count > 0)
+            {
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead><tr><th>Schedule</th><th>Frequency</th><th>Time</th><th>Status</th><th>Last run</th><th>Next run</th><th>Actions</th></tr></thead>
+                        <tbody>
+                            @foreach (var schedule in _schedules)
+                            {
+                                <tr>
+                                    <td><strong>@schedule.Name</strong></td>
+                                    <td>@FrequencyText(schedule)</td>
+                                    <td>@schedule.TimeText</td>
+                                    <td><span class="badge @(schedule.Enabled ? "active" : "inactive")">@(schedule.Enabled ? "Enabled" : "Disabled")</span></td>
+                                    <td>@(schedule.LastRunUtc.HasValue ? schedule.LastRunUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "Never")</td>
+                                    <td>@schedule.NextRunUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                    <td><button class="link-button" @onclick="() => EditSchedule(schedule)" disabled="@_busy">Edit</button><button class="link-button danger-link" @onclick="() => DeleteScheduleAsync(schedule)" disabled="@_busy">Delete</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+
+        @if (_restoreFile is not null)
+        {
+            <section class="setup-card restore-warning-card">
+                <div class="section-heading"><div><h2>Confirm Restore Drill</h2><p class="muted">This operation restores the selected backup to an isolated recovery database. It does not restore over the source database.</p></div></div>
+                <div class="restore-details">
+                    <p><strong>Backup:</strong> @_restoreFile</p>
+                    <p><strong>Target:</strong> @_config.RecoveryDatabaseName</p>
+                    <p><strong>Purpose:</strong> Recovery validation only</p>
+                </div>
+                <label class="permission-item restore-confirm">
+                    <input type="checkbox" @bind="_restoreConfirmed" />
+                    <span><strong>I understand this will replace the isolated recovery database.</strong><small>The source/production database is not modified.</small></span>
+                </label>
+                <div class="button-row">
+                    <button type="button" class="primary-button" @onclick="RestoreAsync" disabled="@_restoreBusy || !_restoreConfirmed">@(_restoreBusy ? "Restoring..." : "Confirm Restore")</button>
+                    <button type="button" class="secondary-button" @onclick="CancelRestore" disabled="@_restoreBusy">Cancel</button>
+                </div>
+            </section>
+        }
+    }
+</div>
+
+@code {
+    private BackupConfigurationModel? _config;
+    private readonly List<BackupFileModel> _backups = [];
+    private readonly List<BackupScheduleModel> _schedules = [];
+    private ScheduleEditor _schedule = new();
+    private BackupScheduleModel? _editingSchedule;
+    private string? _restoreFile;
+    private bool _restoreConfirmed;
+    private bool _restoreBusy;
+    private bool _loading = true;
+    private bool _busy;
+    private bool _backupBusy;
+    private string? _error;
+    private string? _success;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true; _error = null;
+        var config = await AdminApi.GetBackupConfigurationAsync();
+        if (!config.Success) { _error = config.Error; _loading = false; return; }
+        _config = config.Data;
+
+        var backups = await AdminApi.GetBackupsAsync();
+        if (!backups.Success) _error = backups.Error;
+        _backups.Clear(); if (backups.Data is not null) _backups.AddRange(backups.Data);
+
+        var schedules = await AdminApi.GetBackupSchedulesAsync();
+        if (!schedules.Success) _error = schedules.Error ?? _error;
+        _schedules.Clear(); if (schedules.Data is not null) _schedules.AddRange(schedules.Data);
+        _loading = false;
+    }
+
+    private async Task CreateBackupAsync()
+    {
+        if (_backupBusy || _config is null || !_config.Enabled) return;
+
+        _backupBusy = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            var result = await AdminApi.CreateBackupAsync();
+            if (!result.Success)
+            {
+                _error = result.Error;
+                return;
+            }
+
+            _success = result.Data?.Message ?? "Backup completed successfully.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _backupBusy = false;
+        }
+    }
+
+    private async Task VerifyAsync(string fileName)
+    {
+        await BusyAsync(async () =>
+        {
+            var result = await AdminApi.VerifyBackupAsync(fileName);
+            if (!result.Success) { _error = result.Error; return; }
+            _success = $"Backup '{fileName}' verified successfully.";
+            await LoadAsync();
+        });
+    }
+
+    private async Task ApplyRetentionAsync()
+    {
+        await BusyAsync(async () =>
+        {
+            var result = await AdminApi.ApplyBackupRetentionAsync();
+            if (!result.Success) { _error = result.Error; return; }
+            _success = $"Retention applied: {result.Data?.Deleted ?? 0} old backup(s) deleted.";
+            await LoadAsync();
+        });
+    }
+
+    private async Task SaveScheduleAsync()
+    {
+        await BusyAsync(async () =>
+        {
+            var model = new SaveBackupScheduleModel(
+                _schedule.Name,
+                _schedule.Frequency,
+                NormalizeScheduleTimeForApi(_schedule.TimeText),
+                _schedule.Frequency == "Weekly" ? _schedule.DayOfWeek : null,
+                _schedule.Frequency == "Monthly" ? _schedule.DayOfMonth : null,
+                _schedule.Enabled);
+            var result = _editingSchedule is null
+                ? await AdminApi.CreateBackupScheduleAsync(model)
+                : await AdminApi.UpdateBackupScheduleAsync(_editingSchedule.Id, model);
+            if (!result.Success) { _error = result.Error; return; }
+            _success = _editingSchedule is null ? "Backup schedule created." : "Backup schedule updated.";
+            CancelScheduleEdit();
+            await LoadAsync();
+        });
+    }
+
+    private void OnScheduleTimeChanged(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString() ?? string.Empty;
+        _schedule.TimeText = value.Trim();
+    }
+
+    private static string NormalizeScheduleTimeForApi(string value)
+    {
+        if (TimeOnly.TryParseExact(value.Trim(), new[] { "HH:mm", "H:mm", "hh:mm tt", "h:mm tt" },
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AllowWhiteSpaces, out var parsed))
+        {
+            return parsed.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return value.Trim();
+    }
+
+    private void EditSchedule(BackupScheduleModel schedule)
+    {
+        _editingSchedule = schedule;
+        _schedule = new ScheduleEditor
+        {
+            Name = schedule.Name,
+            Frequency = schedule.Frequency,
+            TimeText = schedule.TimeText,
+            DayOfWeek = schedule.DayOfWeek ?? 1,
+            DayOfMonth = schedule.DayOfMonth ?? 1,
+            Enabled = schedule.Enabled
+        };
+    }
+
+    private void CancelScheduleEdit() { _editingSchedule = null; _schedule = new ScheduleEditor(); }
+
+    private async Task DeleteScheduleAsync(BackupScheduleModel schedule)
+    {
+        await BusyAsync(async () =>
+        {
+            var result = await AdminApi.DeleteBackupScheduleAsync(schedule.Id);
+            if (!result.Success) { _error = result.Error; return; }
+            _success = $"Schedule '{schedule.Name}' deleted.";
+            await LoadAsync();
+        });
+    }
+
+    private void BeginRestore(string fileName) { _restoreFile = fileName; _restoreConfirmed = false; _restoreBusy = false; _error = null; _success = null; }
+    private void CancelRestore() { if (_restoreBusy) return; _restoreFile = null; _restoreConfirmed = false; }
+
+    private async Task RestoreAsync()
+    {
+        if (_restoreFile is null || !_restoreConfirmed || _restoreBusy) return;
+
+        _restoreBusy = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            var result = await AdminApi.RestoreBackupAsync(_restoreFile);
+            if (!result.Success)
+            {
+                _error = result.Error;
+                return;
+            }
+
+            _success = result.Data?.Message ?? "Restore completed successfully.";
+            _restoreFile = null;
+            _restoreConfirmed = false;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _restoreBusy = false;
+        }
+    }
+
+    private async Task BusyAsync(Func<Task> action)
+    {
+        _busy = true; _error = null; _success = null;
+        try { await action(); } catch (Exception ex) { _error = ex.Message; } finally { _busy = false; }
+    }
+
+    private static string FrequencyText(BackupScheduleModel x) => x.Frequency switch
+    {
+        "Weekly" => $"Every {DayName(x.DayOfWeek)}",
+        "Monthly" => $"Every month on day {x.DayOfMonth}",
+        _ => "Every day"
+    };
+
+    private static string DayName(int? day) => day switch { 0 => "Sunday", 1 => "Monday", 2 => "Tuesday", 3 => "Wednesday", 4 => "Thursday", 5 => "Friday", 6 => "Saturday", _ => "-" };
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double size = bytes; var unit = 0;
+        while (size >= 1024 && unit < units.Length - 1) { size /= 1024; unit++; }
+        return $"{size:0.##} {units[unit]}";
+    }
+
+    private sealed class ScheduleEditor
+    {
+        public string Name { get; set; } = "Daily Database Backup";
+        public string Frequency { get; set; } = "Daily";
+        public string TimeText { get; set; } = "02:00";
+        public int DayOfWeek { get; set; } = 1;
+        public int DayOfMonth { get; set; } = 1;
+        public bool Enabled { get; set; } = true;
+    }
+}
